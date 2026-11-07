@@ -15,6 +15,8 @@ npm run world      # leave it running
 npm run check      # in a second terminal
 ```
 
+On two laptops, run `npm run bob` on one and `npm run alice` on the other, behind a Cloudflare Tunnel. The spike README covers the setup.
+
 Keep this section current: anyone should be able to run main from a fresh clone.
 
 ## Who owns what

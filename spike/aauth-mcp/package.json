@@ -7,6 +7,8 @@
   },
   "scripts": {
     "world": "node world.mjs",
+    "alice": "node alice.mjs",
+    "bob": "node bob.mjs",
     "world:consent": "CONSENT=1 node world.mjs",
     "check": "node client-check.mjs granted",
     "check:none": "node client-check.mjs none",

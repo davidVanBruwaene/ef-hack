@@ -5,7 +5,7 @@ import { createAAuthFetch } from '@aauth/agent'
 import { bridgeTransports, serializeAuthFlows } from '@aauth/mcp-stdio'
 import { DWK, SIGNING_ALG, TOKEN_TYP } from '@aauth/protocol'
 import { SignJWT } from 'jose'
-import { AGENT, AGENT_SUB, PORTS, PS, RESOURCE, missionHash } from './config.mjs'
+import { AGENT, AGENT_SUB, LOOPBACK, PS, RESOURCE, missionHash } from './config.mjs'
 import { agentIdentityKey, newKey } from './keys.mjs'
 import { routeTestHostsToLoopback } from './loopback.mjs'
 
@@ -30,7 +30,7 @@ const aauthFetch = serializeAuthFlows(createAAuthFetch({
   ...(missionS256 ? { missionS256 } : {}),
   onInteraction: (url, code) => {
     const { hostname, pathname } = new URL(url)
-    const local = PORTS[hostname] ? ` (on this machine: http://127.0.0.1:${PORTS[hostname]}${pathname}?code=${code})` : ''
+    const local = LOOPBACK[hostname] ? ` (on this machine: http://127.0.0.1:${LOOPBACK[hostname]}${pathname}?code=${code})` : ''
     say(`consent needed: open ${url}?code=${code}${local}`)
   },
   ...(process.env.AAUTH_DEBUG ? { onEvent: e => say(JSON.stringify(e).slice(0, 300)) } : {}),
