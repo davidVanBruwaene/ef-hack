@@ -1,6 +1,6 @@
 # AAuth-protected MCP spike
 
-Alice shares some personal context with Bob's agent for one stated intent. Bob's agent (Claude Code) reaches Alice's MCP server through a stdio proxy. The proxy signs every request with AAuth (draft-hardt-oauth-aauth-protocol-11) and names the intent as its mission. Alice's server serves only the fields Alice granted for that mission.
+Alice keeps a list of links, each marked Everyone, Ask me or Only me. Bob's agent (Claude Code) reaches Alice's MCP server through a stdio proxy. The proxy signs every request with AAuth (draft-hardt-oauth-aauth-protocol-11) and names Bob's mission. Alice's server returns Everyone items at once. For Ask-me items it asks Alice while the call waits. Only-me items never appear. Each item the agent asks for needs its own scope, so it goes back through Bob's person server first.
 
 It runs on one laptop, or on two laptops behind a Cloudflare Tunnel. No real accounts are used.
 
@@ -31,9 +31,12 @@ npm run world
 
 | Command | Case | Expected result |
 |---|---|---|
-| `npm run check` | The granted intent | Alice's availability and meeting preferences come back |
-| `npm run check:none` | No mission | 403 before any resource token |
-| `npm run check:wrong` | A mission Alice never granted | 403 |
+| `npm run check` | All five cases below, each under a fresh mission | `all 5 passed` |
+| `node client-check.mjs everyone` | Two Everyone items | Both come back |
+| `node client-check.mjs ask` | An Ask-me item | The call waits; the script answers as Alice (approve) through `/api`; the item comes back |
+| `node client-check.mjs deny` | An Ask-me item | Same, but Alice denies; the item is `declined` |
+| `node client-check.mjs only_me` | A query matching an Only-me item | `not_found`; Alice's log shows it withheld |
+| `node client-check.mjs revoked` | Alice revokes Bob, then Bob's agent calls | `403 requester_revoked`; the script restores Bob afterwards |
 | `npm run check:consent` | Bob must approve | The agent waits on a consent link and code; the script approves it after 2 seconds |
 
 To run it from Claude Code, first write the MCP config for this checkout (`mcp.json` is gitignored):
@@ -42,14 +45,33 @@ To run it from Claude Code, first write the MCP config for this checkout (`mcp.j
 npm run mcp-config
 ```
 
-Then call the tool:
+Then ask Claude Code to use it. An Ask-me item waits until Alice answers in her console, or for 55 seconds (`ALICE_ASK_WAIT_S`).
 
 ```bash
-claude -p "Call get_shared_context on the alice server and propose a meeting slot." \
-  --mcp-config mcp.json --strict-mcp-config --allowedTools mcp__alice__get_shared_context
+claude -p "Use the alice server to see what Alice shares, then decide whether Bob and Alice should talk." \
+  --mcp-config mcp.json --strict-mcp-config \
+  --allowedTools mcp__alice__get_context_schema,mcp__alice__search_context
 ```
 
-`alice.json` holds Alice's context and grants. Each grant is an intent plus the fields it shares. The mission hash is the base64url SHA-256 of the intent text.
+`npm run mcp-config "<mission text>"` sets a different mission. The mission hash is the base64url SHA-256 of the text.
+
+`alice.json` seeds Alice's name and items. Her state is kept in `.data/alice-state.json`: rules, requesters, asks and the disclosure log. Delete `.data/` to start over.
+
+## Alice's console API
+
+The owner console (`console/`) calls these on Alice's server. Every call except `/api/events` needs `Authorization: Bearer <token>`, where the token is `ALICE_CONSOLE_TOKEN` or else the one generated into `.keys/alice-console-token`.
+
+| Call | Body | Effect |
+|---|---|---|
+| `GET /api/state` | | `{owner, items, requesters, asks, disclosures}`, newest asks and disclosures first |
+| `POST /api/asks/{id}` | `{decision: "approve" \| "deny", remember}` | Answers one ask. `remember` applies the answer to every later mission from this requester |
+| `POST /api/asks` | `{decisions: [{id, decision, remember}]}` | Answers several asks at once |
+| `POST /api/requesters/{id}` | `{status: "active" \| "revoked", label}` | Revoking refuses that requester's next call and denies its pending asks |
+| `POST /api/items/{id}` | `{rule}` | Changes an item's rule. Stands in until the item store exists |
+| `POST /api/items` | `{label, url, rule?}` | Adds a link, `ask` by default. Stands in until the item store exists |
+| `GET /api/events` | | Server-sent `changed` events carrying a revision number, and no state; refetch `/api/state` on each |
+
+An answer without `remember` holds for that requester's current mission only. Requester ids are derived from the person server and the pairwise `sub` it issues for Alice. The label comes from the `name` claim in the auth token. Each disclosure entry carries `prev` and `hash`, chaining it to the one before.
 
 ## Behind Cloudflare
 
@@ -109,16 +131,16 @@ The tunnel passes the public hostname through as the `Host` header, and the HTTP
 ## The flow
 
 1. The proxy signs a request with an agent token. Alice's server answers `401 requirement=person-token`.
-2. The proxy gets a person token, carrying `mission_s256`, from Bob's person server. Alice's server checks the mission against Alice's grants:
-   - no matching grant: `403 mission_not_granted`;
-   - a matching grant: it issues a resource token and answers `401 requirement=auth-token`.
-3. The proxy exchanges the resource token at Bob's person server for an auth token that carries the same mission. Alice's server verifies the auth token and serves MCP.
-4. `get_shared_context` returns only the granted fields.
+2. The proxy gets a person token, carrying `mission_s256`, from Bob's person server. Alice's server refuses a revoked requester with `403`. Otherwise it issues a resource token for scope `context` and answers `401 requirement=auth-token`.
+3. The proxy exchanges the resource token at Bob's person server for an auth token that carries the same mission. Alice's server verifies it and serves MCP: `get_context_schema` lists the items Bob may request.
+4. `search_context` names items. If the auth token lacks `item:<id>` for any of them, Alice's server issues a new resource token with the wider scope and answers `401 requirement=auth-token`. The proxy steps up at Bob's person server, presenting its current auth token, and retries.
+5. Everyone items come back. Ask-me items raise an ask in Alice's console and the call waits for her answer. Only-me items are reported as `not_found`. Each call is appended to the disclosure log.
 
 ## Limits
 
 - **Missions.** No person server implements `mission_endpoint`. mockin accepts any mission hash, and nobody approves the mission text itself.
-- **Grant scope.** A grant is bound to a mission, not to Bob. Any agent whose person server stamps that mission hash gets in.
+- **Who is asking.** Alice's server knows a requester only as a person server plus a pairwise `sub`, labelled with the name that server puts in the auth token. Nothing proves that name.
+- **Reasons.** The `reason` Alice sees is the agent's own claim. Bob's mission text stays at Bob's person server.
 - **Consent.** mockin approves automatically unless `check:consent` or `npm run world:consent` turns approval on. Its consent link resolves only where Bob's person server is reachable: this machine, or anywhere once tunnelled.
 - **Agent identity.** mockin's auth token names the agent's key (`cnf`), not the agent itself. To fill the gap, `alice.mjs` records which agent signed with each key.
 - **Protocol coverage.** `@aauth/*` supports neither four-party mode (a separate access server) nor call chaining, so neither is here.

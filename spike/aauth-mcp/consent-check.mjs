@@ -10,7 +10,7 @@ const mock = body => fetch(`http://127.0.0.1:${PORTS.mockin}/mock/aauth`, {
 })
 await mock({ person_requirement: 'interaction', auto_approve: false })
 
-const child = spawn(process.execPath, [fileURLToPath(new URL('./client-check.mjs', import.meta.url)), 'granted'], {
+const child = spawn(process.execPath, [fileURLToPath(new URL('./client-check.mjs', import.meta.url)), 'everyone'], {
   stdio: ['ignore', 'pipe', 'pipe'],
 })
 let out = ''

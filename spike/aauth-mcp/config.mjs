@@ -11,8 +11,8 @@ export const PS = identifier('AAUTH_PS', 'https://ps.aauth.test')
 export const RESOURCE = identifier('AAUTH_RESOURCE', 'https://alice.aauth.test')
 export const AGENT = identifier('AAUTH_AGENT', 'https://bob-agent.aauth.test')
 export const AGENT_SUB = `aauth:claude@${new URL(AGENT).hostname}`
-export const SCOPE = 'read'
 export const BOB_NAME = process.env.BOB_NAME || 'Bob'
+export const DEFAULT_MISSION = 'I met Alice at the hackathon. Check whether we should talk, and if so book 30 minutes.'
 
 // Local listen ports. mockin sits behind the person-server front and is never exposed.
 export const PORTS = { ps: 4401, resource: 4402, agent: 4403, mockin: 4411 }

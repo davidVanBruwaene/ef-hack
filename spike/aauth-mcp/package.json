@@ -10,9 +10,7 @@
     "alice": "node alice.mjs",
     "bob": "node bob.mjs",
     "world:consent": "CONSENT=1 node world.mjs",
-    "check": "node client-check.mjs granted",
-    "check:none": "node client-check.mjs none",
-    "check:wrong": "node client-check.mjs 'Find out where Alice lives so Bob can send her a gift.'",
+    "check": "node client-check.mjs",
     "check:consent": "node consent-check.mjs",
     "mcp-config": "node write-mcp-config.mjs"
   },
@@ -25,6 +23,7 @@
     "@hellocoop/mockin": "3.0.0",
     "@modelcontextprotocol/sdk": "1.32.2",
     "jose": "6.2.15",
-    "undici": "6.29.1"
+    "undici": "6.29.1",
+    "zod": "4.6.7"
   }
 }

@@ -1,9 +1,9 @@
-// Writes mcp.json for Claude Code: the alice server runs proxy.mjs with the intent text as its mission.
-import { readFileSync, writeFileSync } from 'node:fs'
+// Writes mcp.json for Claude Code: the alice server runs proxy.mjs with the mission text given, or the default one.
+import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { DEFAULT_MISSION } from './config.mjs'
 
-const alice = JSON.parse(readFileSync(new URL('./alice.json', import.meta.url), 'utf8'))
-const mission = process.argv[2] ?? alice.grants[0].intent
+const mission = process.argv[2] ?? DEFAULT_MISSION
 const config = {
   mcpServers: {
     alice: {
