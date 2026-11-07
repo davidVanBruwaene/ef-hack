@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { consoleToken } from './alice-state.mjs'
-import { BOB_NAME, DEFAULT_MISSION, LOOPBACK, PORTS, RESOURCE, missionHash } from './config.mjs'
+import { BOB_NAME, DEFAULT_MISSION, LOOPBACK, PORTS, PS, RESOURCE, missionHash } from './config.mjs'
 
 const PROXY = fileURLToPath(new URL('./proxy.mjs', import.meta.url))
 const ALICE_API = LOOPBACK[new URL(RESOURCE).hostname] ? `http://127.0.0.1:${PORTS.resource}/api` : `${RESOURCE}/api`
@@ -63,7 +63,7 @@ async function runCase(name) {
   const c = CASES[name]
   let revoked
   if (c.revoke) {
-    revoked = (await api('/state')).requesters.find(r => r.label === BOB_NAME)?.id
+    revoked = (await api('/state')).requesters.find(r => r.label === BOB_NAME && r.ps === PS)?.id
     if (!revoked) throw new Error(`${BOB_NAME} is not a requester yet; run another case first`)
     await api(`/requesters/${revoked}`, { status: 'revoked' })
   }

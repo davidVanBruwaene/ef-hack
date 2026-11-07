@@ -23,7 +23,8 @@ child.stderr.on('data', b => {
   const url = new URL(m[1])
   setTimeout(async () => {
     // Stands in for Bob's phone opening the link from a QR code.
-    const res = await fetch(`http://127.0.0.1:${LOOPBACK[url.hostname]}${url.pathname}${url.search}`)
+    const port = LOOPBACK[url.hostname]
+    const res = await fetch(port ? `http://127.0.0.1:${port}${url.pathname}${url.search}` : url.href)
     console.error(`[bob] opened ${url.origin}${url.pathname}?code=… after 2s: HTTP ${res.status}`)
   }, 2000)
 })
