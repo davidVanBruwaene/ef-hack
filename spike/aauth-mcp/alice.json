@@ -1,0 +1,15 @@
+{
+  "owner": "Alice",
+  "context": {
+    "availability": ["Mon 10:00-12:00", "Wed 14:00-16:00", "Fri 09:00-10:00"],
+    "meeting_preferences": "Video call, 30 minutes at most, mornings preferred",
+    "dietary": "Vegetarian, no nuts",
+    "home_address": "12 Example Street, Springfield"
+  },
+  "grants": [
+    {
+      "intent": "Book a 30-minute meeting between Alice and Bob next week to discuss the hackathon project.",
+      "fields": ["availability", "meeting_preferences"]
+    }
+  ]
+}
