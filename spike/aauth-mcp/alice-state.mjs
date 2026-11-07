@@ -1,39 +1,22 @@
 // Alice's state: her items and their rules, the requesters, the asks waiting on her, and the disclosure log.
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { DATA_DIR, KEY_DIR } from './config.mjs'
+import { readFileSync } from 'node:fs'
+import { bearerToken, jsonFile, now, randomId, sha256 } from './store.mjs'
 
-const FILE = new URL('alice-state.json', DATA_DIR)
-const sha = text => createHash('sha256').update(text).digest('base64url')
-const now = () => new Date().toISOString()
-
+export { tokenMatches } from './store.mjs'
 export const RULES = ['everyone', 'ask', 'only_me']
 
 // A short, URL-safe id for a person as their person server names them to Alice (the sub is pairwise).
-export const requesterId = (ps, sub) => `r_${sha(`${ps} ${sub}`).slice(0, 16)}`
+export const requesterId = (ps, sub) => `r_${sha256(`${ps} ${sub}`).slice(0, 16)}`
 
-// Bearer token for /api. Set ALICE_CONSOLE_TOKEN, or one is generated into .keys/alice-console-token.
-export function consoleToken() {
-  if (process.env.ALICE_CONSOLE_TOKEN) return process.env.ALICE_CONSOLE_TOKEN
-  const file = new URL('alice-console-token', KEY_DIR)
-  if (!existsSync(file)) {
-    mkdirSync(KEY_DIR, { recursive: true })
-    writeFileSync(file, randomBytes(24).toString('base64url'), { mode: 0o600 })
-  }
-  return readFileSync(file, 'utf8').trim()
-}
-
-export const tokenMatches = (header, token) => {
-  const given = Buffer.from(String(header ?? ''))
-  const want = Buffer.from(`Bearer ${token}`)
-  return given.length === want.length && timingSafeEqual(given, want)
-}
+// Bearer token for Alice's /api: ALICE_CONSOLE_TOKEN, or one generated into .keys/alice-console-token.
+export const consoleToken = () => bearerToken('ALICE_CONSOLE_TOKEN', 'alice-console-token')
 
 const slug = label => label.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'link'
 
 export function openState(seedUrl) {
   const seed = JSON.parse(readFileSync(seedUrl, 'utf8'))
-  const saved = existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : {}
+  const file = jsonFile('alice-state.json')
+  const saved = file.load()
   const s = {
     owner: seed.owner,
     items: saved.items ?? seed.items,
@@ -45,11 +28,8 @@ export function openState(seedUrl) {
   const listeners = new Set()
 
   function changed() {
-    mkdirSync(DATA_DIR, { recursive: true })
-    const tmp = new URL('alice-state.json.tmp', DATA_DIR)
     const { items, requesters, asks, disclosures } = s
-    writeFileSync(tmp, JSON.stringify({ items, requesters, asks, disclosures }, null, 2))
-    renameSync(tmp, FILE)
+    file.save({ items, requesters, asks, disclosures })
     rev++
     for (const l of listeners) l(rev)
   }
@@ -83,7 +63,7 @@ export function openState(seedUrl) {
     let ask = s.asks.find(a => a.requester === rid && a.mission_s256 === mission && a.item_id === item.id)
     if (!ask) {
       ask = {
-        id: `ask_${randomBytes(6).toString('base64url')}`,
+        id: randomId('ask'),
         requester: rid, agent, mission_s256: mission, item_id: item.id, reason: reason ?? '',
         status: 'pending', created_at: now(),
       }
@@ -123,7 +103,7 @@ export function openState(seedUrl) {
   function disclose(entry) {
     const prev = s.disclosures.at(-1)?.hash ?? ''
     const body = { at: now(), ...entry, prev }
-    s.disclosures.push({ ...body, hash: sha(prev + JSON.stringify(body)) })
+    s.disclosures.push({ ...body, hash: sha256(prev + JSON.stringify(body)) })
     changed()
   }
 

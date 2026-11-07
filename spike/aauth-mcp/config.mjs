@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 
 const envFile = new URL('../../.env', import.meta.url)
@@ -27,5 +26,3 @@ export const LOOPBACK = Object.fromEntries(
 export const KEY_DIR = new URL('./.keys/', import.meta.url)
 export const DATA_DIR = new URL('./.data/', import.meta.url)
 
-// No person server implements mission_endpoint yet, so the mission hash is SHA-256 of the intent text.
-export const missionHash = text => createHash('sha256').update(text, 'utf8').digest('base64url')

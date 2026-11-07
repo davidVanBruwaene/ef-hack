@@ -9,6 +9,7 @@
     "world": "node world.mjs",
     "alice": "node alice.mjs",
     "bob": "node bob.mjs",
+    "mission": "node mission.mjs",
     "world:consent": "CONSENT=1 node world.mjs",
     "check": "node client-check.mjs",
     "check:consent": "node consent-check.mjs",
@@ -23,6 +24,7 @@
     "@hellocoop/mockin": "3.0.0",
     "@modelcontextprotocol/sdk": "1.32.2",
     "jose": "6.2.15",
+    "qrcode": "1.5.4",
     "undici": "6.29.1",
     "zod": "4.6.7"
   }

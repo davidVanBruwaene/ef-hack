@@ -1,8 +1,7 @@
 // Alice's side: the AAuth-protected MCP server holding Alice's links, and the /api her owner console calls.
 import { SignJWT } from 'jose'
 import { z } from 'zod'
-import { verify as httpSigVerify } from '@hellocoop/httpsig'
-import { buildAAuthHeader, createResourceToken, verifyToken } from '@aauth/resource'
+import { buildAAuthHeader, createResourceToken } from '@aauth/resource'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { RULES, consoleToken, openState, requesterId, tokenMatches } from './alice-state.mjs'
@@ -10,6 +9,7 @@ import { PORTS, RESOURCE } from './config.mjs'
 import { isMain, json, listen, logger, readBody, short } from './http.mjs'
 import { resourceKey } from './keys.mjs'
 import { routeTestHostsToLoopback } from './loopback.mjs'
+import { verifySignedRequest } from './verify.mjs'
 
 const log = logger('alice')
 // Kept under Cloudflare's 100 s origin timeout, so a held call answers before the tunnel drops it.
@@ -40,31 +40,16 @@ function requiredScopes(rid, message) {
 }
 
 async function aauthGate(req, url, raw, message, key, sign) {
-  const sig = await httpSigVerify({
-    method: req.method ?? 'POST',
-    authority: req.headers.host ?? '',
-    path: url.pathname,
-    query: url.search.replace(/^\?/, '') || undefined,
-    headers: req.headers,
-    body: raw.length ? raw : undefined,
-  }, { supportedAlgorithms: ['Ed25519'] })
-  if (!sig.verified || !sig.jwt?.raw) {
-    log('✗ unsigned request or bad signature', sig.error ?? '')
+  const v = await verifySignedRequest(req, url, raw, { resource: RESOURCE, accept: ['agent', 'person', 'auth'] })
+  if (v.error === 'invalid_signature') {
+    log('✗ unsigned request or bad signature', v.detail)
     return reject(401, 'agent_token_required', buildAAuthHeader('agent-token'))
   }
-
-  let token
-  try {
-    token = await verifyToken({
-      jwt: sig.jwt.raw,
-      httpSignatureThumbprint: sig.thumbprint,
-      resource: RESOURCE,
-      accept: ['agent', 'person', 'auth'],
-    })
-  } catch (err) {
-    log('✗ token rejected:', err.code ?? '', err.message)
-    return reject(401, err.code ?? 'invalid_token', buildAAuthHeader('agent-token'), err.message)
+  if (v.error) {
+    log('✗ token rejected:', v.error, v.detail)
+    return reject(401, v.error, buildAAuthHeader('agent-token'), v.detail)
   }
+  const { sig, token } = v
 
   if (token.type === 'agent') {
     agentByKey.set(sig.thumbprint, token.sub)
