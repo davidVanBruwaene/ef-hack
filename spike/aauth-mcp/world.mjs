@@ -162,7 +162,7 @@ function contextServer(grant, auth, agent) {
   const server = new McpServer({ name: 'alice-context', version: '0.0.1' })
   server.registerTool('get_shared_context', {
     title: "Alice's shared context",
-    description: "Returns the parts of Alice's personal context that she shared for the intent this agent operates under.",
+    description: "Returns the parts of Alice's personal context that Alice shared for the intent this agent operates under.",
   }, async () => {
     const shared = Object.fromEntries(grant.fields.map(f => [f, alice.context[f]]))
     log(`4. serving [${grant.fields.join(', ')}] to ${auth.sub}; withheld [${Object.keys(alice.context).filter(f => !grant.fields.includes(f)).join(', ')}]`)

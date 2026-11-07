@@ -1,6 +1,6 @@
 # AAuth-protected MCP spike
 
-Alice shares part of her personal context with Bob's agent for one stated intent. Bob's agent (Claude Code) reaches Alice's MCP server through a stdio proxy. The proxy signs every request with AAuth (draft-hardt-oauth-aauth-protocol-11) and names the intent as its mission. Alice's server serves only the fields she granted for that mission.
+Alice shares some personal context with Bob's agent for one stated intent. Bob's agent (Claude Code) reaches Alice's MCP server through a stdio proxy. The proxy signs every request with AAuth (draft-hardt-oauth-aauth-protocol-11) and names the intent as its mission. Alice's server serves only the fields Alice granted for that mission.
 
 Everything runs on this machine. Nothing is published, and no real accounts are used.
 
@@ -47,12 +47,12 @@ claude -p "Call get_shared_context on the alice server and propose a meeting slo
   --mcp-config mcp.json --strict-mcp-config --allowedTools mcp__alice__get_shared_context
 ```
 
-`alice.json` holds Alice's context and her grants. Each grant is an intent plus the fields it shares. The mission hash is the base64url SHA-256 of the intent text.
+`alice.json` holds Alice's context and grants. Each grant is an intent plus the fields it shares. The mission hash is the base64url SHA-256 of the intent text.
 
 ## The flow
 
 1. The proxy signs a request with an agent token. Alice's server answers `401 requirement=person-token`.
-2. The proxy gets a person token, carrying `mission_s256`, from Bob's person server. Alice's server checks the mission against her grants:
+2. The proxy gets a person token, carrying `mission_s256`, from Bob's person server. Alice's server checks the mission against Alice's grants:
    - no matching grant: `403 mission_not_granted`;
    - a matching grant: it issues a resource token and answers `401 requirement=auth-token`.
 3. The proxy exchanges the resource token at Bob's person server for an auth token that carries the same mission. Alice's server verifies the auth token and serves MCP.
