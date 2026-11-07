@@ -6,7 +6,16 @@ What we're building: _one line, once it's decided._
 
 ## Run it
 
-_Install and start commands go here as soon as there's code. Keep them current: anyone should be able to run main from a fresh clone._
+The AAuth MCP spike needs Node 22 or later. Details are in [spike/aauth-mcp/README.md](spike/aauth-mcp/README.md).
+
+```bash
+cd spike/aauth-mcp
+npm ci --ignore-scripts
+npm run world      # leave it running
+npm run check      # in a second terminal
+```
+
+Keep this section current: anyone should be able to run main from a fresh clone.
 
 ## Who owns what
 
