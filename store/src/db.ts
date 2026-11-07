@@ -1,9 +1,43 @@
 import { DatabaseSync } from 'node:sqlite'
 import { createHash, randomBytes } from 'node:crypto'
 
-export const sha256 = (s) => createHash('sha256').update(s).digest('base64url')
+export interface UserRow {
+  id: string
+  display_name: string
+  first_name: string
+  last_name: string
+  created_at: number
+}
 
-export function openDb(path) {
+export interface CredentialRow {
+  id: string
+  user_id: string
+  public_key: Uint8Array
+  counter: number
+  transports: string
+  device_type: string
+  backed_up: number
+  label: string
+  created_at: number
+  last_used_at: number | null
+}
+
+export interface SessionRow {
+  token_hash: string
+  user_id: string
+  via: 'passkey' | 'recovery'
+  expires_at: number
+}
+
+export interface RecoveryCodeRow {
+  code_hash: string
+  user_id: string
+  used_at: number | null
+}
+
+export const sha256 = (s: string): string => createHash('sha256').update(s).digest('base64url')
+
+export function openDb(path: string): DatabaseSync {
   const db = new DatabaseSync(path)
   db.exec(`
     PRAGMA foreign_keys = ON;
@@ -43,7 +77,7 @@ export function openDb(path) {
 
 const ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz' // Crockford base32, no i l o u
 
-export function newRecoveryCodes(n = 8) {
+export function newRecoveryCodes(n = 8): string[] {
   return Array.from({ length: n }, () => {
     const bytes = randomBytes(10)
     const s = Array.from(bytes, (b) => ALPHABET[b % 32]).join('')
@@ -51,4 +85,4 @@ export function newRecoveryCodes(n = 8) {
   })
 }
 
-export const normalizeCode = (c) => String(c).toLowerCase().replace(/[^0-9a-z]/g, '')
+export const normalizeCode = (c: unknown): string => String(c).toLowerCase().replace(/[^0-9a-z]/g, '')

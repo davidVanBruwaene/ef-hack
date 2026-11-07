@@ -15,11 +15,12 @@ npm run world      # leave it running
 npm run check      # in a second terminal
 ```
 
-The passkey store (accounts and sign-in; Node 22.5 or later) lives in `store/`:
+The passkey store (accounts and sign-in; Node 22.18 or later) lives in `store/`:
 
 ```bash
 cd store
 npm ci
+npm run typecheck  # tsc, no emit
 npm test           # 7 tests with a software passkey, no browser needed
 npm start          # http://localhost:8790
 ```

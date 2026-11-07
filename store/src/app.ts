@@ -1,9 +1,10 @@
-import { Hono } from 'hono'
 import { readFileSync } from 'node:fs'
-import { openDb } from './db.mjs'
-import { createAuth } from './auth.mjs'
+import { Hono } from 'hono'
+import { openDb } from './db.ts'
+import { createAuth } from './auth.ts'
+import type { Config } from './config.ts'
 
-export function createApp(config) {
+export function createApp(config: Config): Hono {
   const db = openDb(config.dbPath)
   const app = new Hono()
   app.route('/', createAuth(db, config))

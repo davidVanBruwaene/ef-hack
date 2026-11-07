@@ -1,16 +1,20 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createApp } from '../src/app.mjs'
-import { SoftPasskey } from './authenticator.mjs'
+import { createApp } from '../src/app.ts'
+import { SoftPasskey } from './authenticator.ts'
+import type { Config } from '../src/config.ts'
+import type { Hono } from 'hono'
 
 const ORIGIN = 'http://localhost:5173'
-const config = { port: 0, dbPath: ':memory:', rpID: 'localhost', rpName: 'Test', origins: [ORIGIN] }
+const config: Config = { devPage: false, port: 0, dbPath: ':memory:', rpID: 'localhost', rpName: 'Test', origins: [ORIGIN] }
 
 // A browser's cookie jar, reduced to what these tests need.
-function client(app) {
-  const jar = new Map()
-  const call = async (method, path, body, origin = ORIGIN) => {
-    const headers = { 'content-type': 'application/json' }
+type Json = any // response bodies in these tests are asserted on field by field
+
+function client(app: Hono) {
+  const jar = new Map<string, string>()
+  const call = async (method: string, path: string, body?: unknown, origin: string | null = ORIGIN): Promise<{ status: number; json: Json }> => {
+    const headers: Record<string, string> = { 'content-type': 'application/json' }
     if (origin) headers.origin = origin
     if (jar.size) headers.cookie = [...jar].map(([k, v]) => `${k}=${v}`).join('; ')
     const res = await app.request(path, { method, headers, body: body ? JSON.stringify(body) : undefined })
@@ -25,13 +29,15 @@ function client(app) {
   return { call, jar }
 }
 
-async function register(c, key, first = 'Alice', last = 'Example') {
+type Client = ReturnType<typeof client>
+
+async function register(c: Client, key: SoftPasskey, first = 'Alice', last = 'Example') {
   const opts = await c.call('POST', '/auth/register/options', { first_name: first, last_name: last })
   assert.equal(opts.status, 200)
   return c.call('POST', '/auth/register/verify', key.create(opts.json, ORIGIN))
 }
 
-async function login(c, key) {
+async function login(c: Client, key: SoftPasskey) {
   const opts = await c.call('POST', '/auth/login/options')
   return c.call('POST', '/auth/login/verify', key.get(opts.json, ORIGIN))
 }

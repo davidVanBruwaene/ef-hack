@@ -4,8 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test test/flow.test.mjs",
-    "start": "node src/server.mjs"
+    "test": "node --test test/flow.test.ts",
+    "start": "node src/server.ts",
+    "typecheck": "tsc"
   },
   "keywords": [],
   "author": "",
@@ -18,6 +19,10 @@
     "hono": "^4.13.17"
   },
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.18"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
   }
 }
