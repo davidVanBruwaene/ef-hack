@@ -15,6 +15,16 @@ npm run world      # leave it running
 npm run check      # in a second terminal
 ```
 
+The owner console (React + Vite, mock data until the API exists) lives in `console/`:
+
+```bash
+cd console
+npm ci
+npm run dev        # http://localhost:5173, mock data
+```
+
+Set `VITE_API=live` (and `VITE_API_TARGET` for the server's URL) to use the real console API instead of the mock.
+
 Keep this section current: anyone should be able to run main from a fresh clone.
 
 ## Who owns what
