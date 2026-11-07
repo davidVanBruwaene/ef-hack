@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Team notes channel: append-only Markdown files in notes/ on main, published without pull requests.
+set -eu
+
+usage() {
+  cat >&2 <<'EOF'
+usage: scripts/notes post "<title>" < body.md   publish a note to main from any branch
+       scripts/notes read                       print notes that arrived since your last read
+       scripts/notes list                       list every note on main
+EOF
+  exit 2
+}
+
+cd "$(git rev-parse --show-toplevel)"
+
+author() {
+  local name who
+  name=${NOTES_AUTHOR:-$(git config user.name || echo anon)}
+  who=$(printf '%s' "${name%% *}" | { iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || true; } | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+  echo "${who:-anon}"
+}
+
+catch_up() {
+  [ "$(git branch --show-current)" = main ] || return 0
+  git merge -q --ff-only origin/main 2>/dev/null ||
+    echo "notes: left your local main as is (unpushed commits or local edits); git pull when ready" >&2
+}
+
+post() {
+  local title=${1:-} who slug path tmp blob tree commit n
+  [ -n "$title" ] || usage
+  [ ! -t 0 ] || { echo "notes: pipe the note body on stdin" >&2; exit 2; }
+  who=$(author)
+  slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | tr ' _' '--' | tr -cd 'a-z0-9-' | tr -s '-' | sed 's/^-//; s/-$//')
+  path="notes/$(date -u +%Y-%m-%d-%H%M%S)-$who-${slug:-note}.md"
+  tmp=$(mktemp -d)
+  trap "rm -rf '$tmp'" EXIT
+  { printf '# %s\n\n%s, %s UTC\n\n' "$title" "$who" "$(date -u '+%Y-%m-%d %H:%M')"; cat; } >"$tmp/body"
+  blob=$(git hash-object -w "$tmp/body")
+  for n in 1 2 3 4 5; do
+    git fetch -q origin main
+    rm -f "$tmp/index"
+    GIT_INDEX_FILE="$tmp/index" git read-tree origin/main
+    GIT_INDEX_FILE="$tmp/index" git update-index --add --cacheinfo "100644,$blob,$path"
+    tree=$(GIT_INDEX_FILE="$tmp/index" git write-tree)
+    commit=$(git commit-tree "$tree" -p origin/main -m "note: $title")
+    if git push -q origin "$commit:refs/heads/main" 2>"$tmp/err"; then
+      catch_up
+      echo "posted $path"
+      return 0
+    fi
+    sleep "$n"
+  done
+  cat "$tmp/err" >&2
+  echo "notes: push to main failed 5 times" >&2
+  exit 1
+}
+
+read_new() {
+  local marker seen files f
+  git fetch -q origin main
+  marker=$(git rev-parse --git-path notes-seen)
+  seen=$(cat "$marker" 2>/dev/null || git hash-object -t tree /dev/null)
+  files=$(git diff --name-only --diff-filter=AM "$seen" origin/main -- notes/)
+  if [ -z "$files" ]; then
+    echo "no new notes"
+  else
+    for f in $files; do
+      printf '\n===== %s\n\n' "$f"
+      git show "origin/main:$f"
+    done
+  fi
+  git rev-parse origin/main >"$marker"
+  catch_up
+}
+
+list() {
+  git fetch -q origin main
+  git ls-tree --name-only origin/main notes/ | while read -r f; do
+    printf '%s  %s\n' "$f" "$(git show "origin/main:$f" | head -n 1)"
+  done
+}
+
+case "${1:-}" in
+  post) shift; post "$@" ;;
+  read) read_new ;;
+  list) list ;;
+  *) usage ;;
+esac

@@ -67,7 +67,7 @@ Then start the next task from the top. Don't keep committing on a merged branch:
 
 ### Rules
 
-- Never commit straight to main, and never `git push --force` it.
+- Never commit straight to main (notes posted with `scripts/notes post` are the exception), and never `git push --force` it.
 - Merge main into your branch; don't rebase a branch you've already pushed.
 - Land at least every hour or two. A branch that lives all night becomes a merge at 3 a.m.
 - Say so in the group chat before changing shared files: dependency lists and lockfiles, database schema, env variable names, shared config.
@@ -89,6 +89,10 @@ git tag demo-1 && git push origin demo-1     # next time demo-2, and so on
 ```
 
 If a late change breaks things, `git switch --detach demo-1` checks out the version that worked.
+
+## Notes channel
+
+[`notes/`](notes/) is where we and our agents leave ideas, brainstorming, research and handoffs. `scripts/notes post "<title>" < body.md` publishes a note straight to main from any branch, no PR; `scripts/notes read` prints what's new since you last looked. Conventions are in [notes/README.md](notes/README.md).
 
 ## Secrets
 
