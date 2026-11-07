@@ -1,0 +1,23 @@
+{
+  "name": "owner-store",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test test/flow.test.mjs",
+    "start": "node src/server.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "private": "true",
+  "dependencies": {
+    "@hono/node-server": "^2.1.6",
+    "@simplewebauthn/server": "^14.1.0",
+    "hono": "^4.13.17"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}
