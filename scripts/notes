@@ -13,10 +13,19 @@ EOF
 
 cd "$(git rev-parse --show-toplevel)"
 
+# Strip accents locale-independently (NFD, then drop combining marks); macOS iconv translit drops letters in some locales.
+ascii() {
+  if command -v perl >/dev/null 2>&1; then
+    perl -CS -MUnicode::Normalize -pe '$_ = NFD($_); s/\p{Mn}//g'
+  else
+    cat
+  fi
+}
+
 author() {
   local name who
   name=${NOTES_AUTHOR:-$(git config user.name || echo anon)}
-  who=$(printf '%s' "${name%% *}" | { iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || true; } | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+  who=$(printf '%s' "${name%% *}" | ascii | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
   echo "${who:-anon}"
 }
 
@@ -31,7 +40,7 @@ post() {
   [ -n "$title" ] || usage
   [ ! -t 0 ] || { echo "notes: pipe the note body on stdin" >&2; exit 2; }
   who=$(author)
-  slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | tr ' _' '--' | tr -cd 'a-z0-9-' | tr -s '-' | sed 's/^-//; s/-$//')
+  slug=$(printf '%s' "$title" | ascii | tr '[:upper:]' '[:lower:]' | tr ' _' '--' | tr -cd 'a-z0-9-' | tr -s '-' | sed 's/^-//; s/-$//')
   path="notes/$(date -u +%Y-%m-%d-%H%M%S)-$who-${slug:-note}.md"
   tmp=$(mktemp -d)
   trap "rm -rf '$tmp'" EXIT
