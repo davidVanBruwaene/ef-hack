@@ -1,16 +1,16 @@
 // Switches mockin to require Bob's consent, runs client-check.mjs, approves via the consent link after 2s, then restores auto-approve.
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { PORTS } from './config.mjs'
+import { LOOPBACK, PORTS } from './config.mjs'
 
-const mock = body => fetch(`http://127.0.0.1:${PORTS['ps.aauth.test']}/mock/aauth`, {
+const mock = body => fetch(`http://127.0.0.1:${PORTS.mockin}/mock/aauth`, {
   method: 'PUT',
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify(body),
 })
 await mock({ person_requirement: 'interaction', auto_approve: false })
 
-const child = spawn(process.execPath, [fileURLToPath(new URL('./client-check.mjs', import.meta.url)), 'granted'], {
+const child = spawn(process.execPath, [fileURLToPath(new URL('./client-check.mjs', import.meta.url)), 'everyone'], {
   stdio: ['ignore', 'pipe', 'pipe'],
 })
 let out = ''
@@ -23,7 +23,8 @@ child.stderr.on('data', b => {
   const url = new URL(m[1])
   setTimeout(async () => {
     // Stands in for Bob's phone opening the link from a QR code.
-    const res = await fetch(`http://127.0.0.1:${PORTS[url.hostname]}${url.pathname}${url.search}`)
+    const port = LOOPBACK[url.hostname]
+    const res = await fetch(port ? `http://127.0.0.1:${port}${url.pathname}${url.search}` : url.href)
     console.error(`[bob] opened ${url.origin}${url.pathname}?code=… after 2s: HTTP ${res.status}`)
   }, 2000)
 })

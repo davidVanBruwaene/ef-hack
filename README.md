@@ -13,7 +13,10 @@ cd spike/aauth-mcp
 npm ci --ignore-scripts
 npm run world      # leave it running
 npm run check      # in a second terminal
+npm run mission    # before using it from Claude Code: Bob approves the mission from a QR code
 ```
+
+On two laptops, run `npm run bob` on one and `npm run alice` on the other, behind a Cloudflare Tunnel. The spike README covers the setup.
 
 Keep this section current: anyone should be able to run main from a fresh clone.
 

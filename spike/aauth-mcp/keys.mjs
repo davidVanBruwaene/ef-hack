@@ -13,14 +13,19 @@ export async function newKey(kid) {
   }
 }
 
-// The agent provider's identity key: the proxy signs agent tokens with it, world.mjs publishes its public half.
-export async function agentIdentityKey() {
-  const file = new URL('agent-identity.json', KEY_DIR)
+// A key kept in .keys/ across restarts, so caches holding its JWKS stay valid.
+export async function persistentKey(name, kid) {
+  const file = new URL(`${name}.json`, KEY_DIR)
   if (!existsSync(file)) {
-    const { kid, publicJwk, privateJwk } = await newKey('bob-agent-identity-1')
+    const { publicJwk, privateJwk } = await newKey(kid)
     mkdirSync(KEY_DIR, { recursive: true })
     writeFileSync(file, JSON.stringify({ kid, publicJwk, privateJwk }), { mode: 0o600 })
   }
-  const { kid, publicJwk, privateJwk } = JSON.parse(readFileSync(file, 'utf8'))
-  return { kid, publicJwk, privateJwk, privateKey: await importJWK(privateJwk, SIGNING_ALG) }
+  const stored = JSON.parse(readFileSync(file, 'utf8'))
+  return { ...stored, privateKey: await importJWK(stored.privateJwk, SIGNING_ALG) }
 }
+
+// The agent provider's identity key: the proxy signs agent tokens with it, bob.mjs publishes its public half.
+export const agentIdentityKey = () => persistentKey('agent-identity', 'bob-agent-identity-1')
+
+export const resourceKey = () => persistentKey('alice-resource', 'alice-resource-1')

@@ -1,15 +1,17 @@
 {
-  "owner": "Alice",
-  "context": {
-    "availability": ["Mon 10:00-12:00", "Wed 14:00-16:00", "Fri 09:00-10:00"],
-    "meeting_preferences": "Video call, 30 minutes at most, mornings preferred",
-    "dietary": "Vegetarian, no nuts",
-    "home_address": "12 Example Street, Springfield"
-  },
-  "grants": [
-    {
-      "intent": "Book a 30-minute meeting between Alice and Bob next week to discuss the hackathon project.",
-      "fields": ["availability", "meeting_preferences"]
-    }
+  "owner": { "first_name": "Alice", "last_name": "Example" },
+  "items": [
+    { "id": "first", "label": "First name", "url": "Alice", "rule": "everyone" },
+    { "id": "last", "label": "Last name", "url": "Example", "rule": "everyone" },
+    { "id": "site", "label": "Personal site", "url": "https://example.com/alice", "rule": "everyone" },
+    { "id": "projects", "label": "Current projects", "url": "https://example.com/alice/projects", "rule": "ask" },
+    { "id": "calendar", "label": "Calendar", "url": "https://example.com/alice/calendar", "rule": "ask" },
+    { "id": "location", "label": "Location", "url": "https://example.com/alice/city", "rule": "ask" },
+    { "id": "x", "label": "X account", "url": "https://x.com/example", "rule": "ask" },
+    { "id": "linkedin", "label": "LinkedIn", "url": "https://linkedin.com/in/example", "rule": "ask" },
+    { "id": "sessions", "label": "Claude Code sessions", "url": "https://example.com/alice/sessions", "rule": "ask" },
+    { "id": "email", "label": "Email", "url": "mailto:alice@example.com", "rule": "ask" },
+    { "id": "phone", "label": "Phone number", "url": "tel:+10000000000", "rule": "only_me" },
+    { "id": "address", "label": "Home address", "url": "https://example.com/alice/address", "rule": "only_me" }
   ]
 }
