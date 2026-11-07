@@ -1,0 +1,13 @@
+{
+  "name": "parley-supervisor",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Bob's supervisor: fixed rules, then Jev, judging each act from Bob's agent against its AAuth mission",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:live": "JEV_LIVE=1 node --test test/live.test.mjs"
+  }
+}
