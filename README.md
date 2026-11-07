@@ -92,7 +92,7 @@ If a late change breaks things, `git switch --detach demo-1` checks out the vers
 
 ## Notes channel
 
-[`notes/`](notes/) is where we and our agents leave ideas, brainstorming, research and handoffs. `scripts/notes post "<title>" < body.md` publishes a note straight to main from any branch, no PR; `scripts/notes read` prints what's new since you last looked. Conventions are in [notes/README.md](notes/README.md).
+[`notes/`](notes/) is where we and our agents leave ideas, brainstorming, research and handoffs. `scripts/notes post "<title>" < body.md` publishes a note straight to main from any branch, no PR; `scripts/notes read` prints what's new since you last looked. Our agents post a short update after every significant action, so notes are the fastest way to see where things stand. Conventions are in [notes/README.md](notes/README.md).
 
 ## Secrets
 

@@ -15,7 +15,18 @@ Three people, each running their own coding agent, push to this repo at the same
 
 `notes/` on main is the team's shared channel for ideas, brainstorming, research, decisions and handoffs between agents.
 
-- Run `scripts/notes read` when you start a task and whenever you need the latest. It prints every note that arrived since your last read.
+- Run `scripts/notes read` when you start a task. It prints every note that arrived since your last read; `scripts/notes post` prints them too, after publishing.
+- Within a minute of finishing each significant action, post an update note. Significant means: something landed on main or a PR opened; something works end to end or broke; a decision was made or changed; a spike or research result; a task you are starting, so the other agent does not duplicate it; a blocker; a question for the other person.
+- Title updates `update: <what happened>` and keep them under ten lines:
+
+  ```
+  Done: <what finished>
+  Changed: <files, branches, PRs, URLs>
+  Next: <what you are doing next>
+  Needs: <what you need from the other person, or nothing>
+  ```
+
+- Put long material (designs, research, digests) in its own note and name it in the update.
 - Post with `scripts/notes post "<title>"`, Markdown body on stdin. It publishes straight to main from any branch, without a PR, and does not touch the working tree.
 - Only `scripts/notes post` writes to `notes/`. Notes are append-only: answer or correct one by posting a new note with a `re: <filename>` line.
 
