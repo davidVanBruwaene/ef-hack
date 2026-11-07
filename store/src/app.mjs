@@ -12,6 +12,7 @@ export function createApp(config) {
   if (config.devPage) {
     const page = readFileSync(new URL('../dev/index.html', import.meta.url), 'utf8')
     app.get('/dev', (c) => c.html(page))
+    app.get('/', (c) => c.redirect('/dev'))
   }
   return app
 }
