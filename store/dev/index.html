@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Passkey test page</title>
+<style>
+  body { font: 16px/1.45 system-ui, sans-serif; max-width: 640px; margin: 0 auto; padding: 24px 16px; background: #faf8f4; color: #1b1a17; }
+  h1 { font-size: 22px; } h2 { font-size: 15px; margin: 24px 0 8px; text-transform: uppercase; letter-spacing: .04em; color: #5e5a50; }
+  input, button { font: inherit; min-height: 44px; padding: 0 12px; border-radius: 10px; border: 1px solid #8a8578; background: #fff; }
+  button { cursor: pointer; font-weight: 600; } button.primary { background: #0f6b63; color: #fff; border-color: #0f6b63; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; } .row input { flex: 1 1 140px; }
+  pre { background: #fff; border: 1px solid #e4dfd3; border-radius: 10px; padding: 12px; overflow-x: auto; white-space: pre-wrap; min-height: 80px; }
+  p.hint { color: #5e5a50; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>Passkey test page</h1>
+<p class="hint">Local testing only. In Chrome without a phone or security key, open DevTools, More tools, WebAuthn, and turn on a virtual authenticator (ctap2, internal, resident keys, user verification).</p>
+
+<h2>Who am I</h2>
+<div class="row"><button id="me">Check session</button><button id="logout">Sign out</button></div>
+
+<h2>Create an account</h2>
+<div class="row"><input id="first" placeholder="First name" autocomplete="given-name"><input id="last" placeholder="Last name" autocomplete="family-name"></div>
+<div class="row"><button id="register" class="primary">Create account with a passkey</button></div>
+
+<h2>Sign in</h2>
+<div class="row"><button id="login" class="primary">Sign in with a passkey</button></div>
+
+<h2>Passkeys (signed in)</h2>
+<div class="row"><input id="label" placeholder="Name this passkey"><button id="add">Add a passkey</button><button id="list">List passkeys</button><button id="newcodes">New recovery codes</button></div>
+
+<h2>Recovery</h2>
+<div class="row"><input id="code" placeholder="abcde-fghjk"><button id="recover">Sign in with a recovery code</button></div>
+
+<h2>Output</h2>
+<pre id="out" aria-live="polite">Ready.</pre>
+
+<script>
+const $ = (id) => document.getElementById(id)
+const show = (label, v) => { $('out').textContent = label + '\n' + JSON.stringify(v, null, 2) }
+async function j(method, path, body) {
+  const r = await fetch(path, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+  return { status: r.status, body: await r.json().catch(() => null) }
+}
+async function run(label, fn) {
+  try { show(label, await fn()) } catch (e) { show(label + ' failed', { name: e.name, message: e.message }) }
+}
+$('me').onclick = () => run('session', () => j('GET', '/auth/me'))
+$('logout').onclick = () => run('sign out', () => j('POST', '/auth/logout', {}))
+$('list').onclick = () => run('passkeys', () => j('GET', '/auth/credentials'))
+$('newcodes').onclick = () => run('new recovery codes (shown once)', () => j('POST', '/auth/recovery-codes', {}))
+$('recover').onclick = () => run('recover', () => j('POST', '/auth/recover', { code: $('code').value }))
+
+$('register').onclick = () => run('register', async () => {
+  const o = await j('POST', '/auth/register/options', { first_name: $('first').value, last_name: $('last').value })
+  if (o.status !== 200) return o
+  const cred = await navigator.credentials.create({ publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(o.body) })
+  return j('POST', '/auth/register/verify', cred.toJSON())
+})
+$('login').onclick = () => run('sign in', async () => {
+  const o = await j('POST', '/auth/login/options', {})
+  const cred = await navigator.credentials.get({ publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(o.body) })
+  return j('POST', '/auth/login/verify', cred.toJSON())
+})
+$('add').onclick = () => run('add passkey', async () => {
+  const o = await j('POST', '/auth/credentials/options', {})
+  if (o.status !== 200) return o
+  const cred = await navigator.credentials.create({ publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(o.body) })
+  return j('POST', '/auth/credentials/verify', { response: cred.toJSON(), label: $('label').value })
+})
+</script>
+</body>
+</html>

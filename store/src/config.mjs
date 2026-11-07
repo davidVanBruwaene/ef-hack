@@ -7,6 +7,7 @@ export function loadConfig(env = process.env) {
     rpID: env.RP_ID ?? 'localhost',
     rpName: env.RP_NAME ?? 'Owner console',
     // Browser origins allowed to call the API (also the CSRF check).
-    origins: (env.RP_ORIGINS ?? 'http://localhost:5173').split(',').map((s) => s.trim()),
+    devPage: env.STORE_DEV_PAGE !== '0',
+    origins: (env.RP_ORIGINS ?? 'http://localhost:5173,http://localhost:8790').split(',').map((s) => s.trim()),
   }
 }
