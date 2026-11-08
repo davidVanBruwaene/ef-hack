@@ -1,8 +1,12 @@
-// Proposes a mission as Bob's agent, shows Bob the approval link as a QR code, and saves it for proxy.mjs. Usage: node mission.mjs ["<text>"]
+// Proposes a mission as Bob's agent, shows Bob the approval link as a QR code, and saves it for proxy.mjs. Usage: node mission.mjs ["<text>"], with the text required on the people network
 import QRCode from 'qrcode'
-import { DEFAULT_MISSION, LOOPBACK, PS } from './config.mjs'
+import { BOB_NAME, DEFAULT_MISSION, LOOPBACK, PS } from './config.mjs'
 import { requestMission, saveMission } from './missions.mjs'
 
+if (!process.argv[2] && (process.env.RP_ID || process.env.STORE_URL)) {
+  console.error(`✗ Say what ${BOB_NAME}'s agent should do: npm run mission -- "<text>". The default mission is about alice.json's Alice, who is not on the people network.`)
+  process.exit(1)
+}
 const description = process.argv[2] ?? DEFAULT_MISSION
 console.log(`Proposing to ${PS}:\n  "${description}"\n`)
 

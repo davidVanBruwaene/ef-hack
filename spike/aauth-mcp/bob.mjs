@@ -17,6 +17,7 @@ const log = logger('bob')
 const MOCKIN = `http://127.0.0.1:${PORTS.mockin}`
 const state = openBobState()
 const bobToken = consoleToken()
+const CONSOLE_URL = process.env.RP_ID ? `https://${process.env.RP_ID.trim()}/` : undefined
 
 async function startAgentProvider() {
   const identity = await agentIdentityKey()
@@ -200,8 +201,8 @@ async function interact(req, res, url) {
   if (!p.x) return html(res, p.status, codeProblemPage(p.kind))
   if (!isBob(req)) {
     return req.method === 'GET'
-      ? html(res, 200, previewPage(p.x, state.mission(p.x.mission), { bobName: BOB_NAME }))
-      : html(res, 401, pairFirstPage({ bobName: BOB_NAME }))
+      ? html(res, 200, previewPage(p.x, state.mission(p.x.mission), { bobName: BOB_NAME, consoleUrl: CONSOLE_URL }))
+      : html(res, 401, pairFirstPage({ bobName: BOB_NAME, consoleUrl: CONSOLE_URL }))
   }
   state.useCode(p.x)
   if (req.method === 'GET') return see(res, p.x.scopes ? `/bob/reviews/${p.x.id}` : `/bob/missions/${p.x.id}`)
@@ -212,7 +213,7 @@ async function interact(req, res, url) {
 // Bob's own pages, signed in: what needs him, live, and each mission or held request.
 async function bobPages(req, res, url) {
   const path = url.pathname
-  if (!isBob(req)) return path === '/bob/live' ? json(res, 401, { error: 'unauthorized' }) : html(res, 401, pairFirstPage({ bobName: BOB_NAME }))
+  if (!isBob(req)) return path === '/bob/live' ? json(res, 401, { error: 'unauthorized' }) : html(res, 401, pairFirstPage({ bobName: BOB_NAME, consoleUrl: CONSOLE_URL }))
   if (path === '/bob' && req.method === 'GET') return html(res, 200, homePage({ bobName: BOB_NAME, open: state.open(), active: state.active() }))
   if (path === '/bob/live' && req.method === 'GET') return json(res, 200, { html: needsYou(state.open()) }, { 'cache-control': 'no-store' })
   const [, kind, id] = path.match(/^\/bob\/(missions|reviews)\/([\w-]+)$/) ?? []

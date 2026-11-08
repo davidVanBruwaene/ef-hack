@@ -53,6 +53,8 @@ npm run mission                 # the default mission
 npm run mission -- "<text>"      # another one
 ```
 
+On the people network, with `RP_ID` or `STORE_URL` set, the text is required, because the default mission is about alice.json's Alice.
+
 The checks need no mission of their own. Each run proposes one and approves it as Bob, with his console token:
 
 | Command | Case | Expected result |

@@ -48,7 +48,7 @@ export const codeEntryPage = () => page('Enter code', `<h1>Enter the code your a
 <div class="row"><button class="primary">Continue</button></div></form>`)
 
 // What anyone holding the code may see: the agent proposed it, so nothing here is news to the agent.
-export function previewPage(x, m, { bobName }) {
+export function previewPage(x, m, { bobName, consoleUrl }) {
   const what = x.scopes
     ? `<h1>${esc(bobName)}, your agent is asking for something</h1><div class="card">${asks(x)}</div>`
     : `<h1>${esc(bobName)}, your agent wants to start a mission</h1><div class="card">${facts(x)}</div>
@@ -56,11 +56,14 @@ export function previewPage(x, m, { bobName }) {
   return page('Sign in to answer', `${what}
 <div class="card"><label>Code</label><div class="code">${esc(x.code)}</div><p class="fine">Check it matches the code your agent showed you.</p></div>
 <div class="card"><strong>Only ${esc(bobName)} can answer.</strong> This browser is not signed in to ${esc(bobName)}'s person server.
-On ${esc(bobName)}'s laptop run <code>npm run pair</code>, scan the code it shows, then open this link again.</div>`)
+${elsewhere(bobName, 'link', consoleUrl)} Otherwise run <code>npm run pair</code> on ${esc(bobName)}'s laptop, scan the code it shows, then open this link again.</div>`)
 }
 
-export const pairFirstPage = ({ bobName }) => page('Sign in', `<h1>This browser is not signed in as ${esc(bobName)}</h1>
-<div class="card">On ${esc(bobName)}'s laptop run <code>npm run pair</code> and scan the code it shows. It signs this browser in for seven days.</div>`)
+// A paired phone can open a link in a browser other than the one that paired, and that browser has no pairing.
+const elsewhere = (bobName, what, consoleUrl) => `If ${esc(bobName)} paired a phone already, open this ${what} in the browser that paired${consoleUrl ? `, or answer in the console at <a href="${esc(consoleUrl)}">${esc(consoleUrl)}</a>` : ''}.`
+
+export const pairFirstPage = ({ bobName, consoleUrl }) => page('Sign in', `<h1>This browser is not signed in as ${esc(bobName)}</h1>
+<div class="card">${elsewhere(bobName, 'page', consoleUrl)} Otherwise run <code>npm run pair</code> on ${esc(bobName)}'s laptop and scan the code it shows. It signs this browser in for seven days.</div>`)
 
 const missionCard = m => `<div class="card"><div>Your agent wants to start a mission.</div><p class="said">${esc(m.description)}</p>
 <form method="get" action="/bob/missions/${esc(m.id)}" class="row"><button class="primary">Review mission</button></form></div>`
