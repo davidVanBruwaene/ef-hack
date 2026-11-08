@@ -73,12 +73,13 @@ export function openBobState() {
       return m
     },
 
-    // The blob's exact bytes are kept, so s256 can be recomputed by anyone holding them.
-    decide(id, decision, editedDescription) {
+    // The blob's exact bytes are kept, so s256 can be recomputed; supervisor: 'rules' keeps the mission away from Jev.
+    decide(id, decision, editedDescription, { supervisor } = {}) {
       const m = s.missions.find(x => x.id === id)
       if (!m || !isOpen(m)) return m
       settle(m)
       if (decision === 'approve') {
+        if (supervisor === 'rules') m.supervisor = 'rules'
         const approvedAt = new Date()
         const blob = {
           agent: m.agent,

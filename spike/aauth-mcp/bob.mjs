@@ -7,7 +7,7 @@ import { decodeJwt } from 'jose'
 import { codeEntryPage, codeProblemPage, homePage, missionPage, needsYou, notFoundPage, pairFirstPage, previewPage, reviewPage } from './bob-pages.mjs'
 import { consoleToken, openBobState, tokenMatches } from './bob-state.mjs'
 import { AGENT, BOB_NAME, PORTS, PS } from './config.mjs'
-import { decide } from './decide-rules.mjs'
+import { decide } from '../../supervisor/decide.mjs'
 import { forward, isMain, json, listen, logger, readBody, relay, short } from './http.mjs'
 import { agentIdentityKey } from './keys.mjs'
 import { routeTestHostsToLoopback } from './loopback.mjs'
@@ -136,12 +136,12 @@ async function pollMission(req, res, url, raw, id) {
   json(res, 200, { s256: m.s256, mission: m.blob_b64 }, { 'cache-control': 'no-store' })
 }
 
-function decideMission(m, decision, description) {
+function decideMission(m, decision, description, supervisor) {
   const before = m.status
-  const d = state.decide(m.id, decision, description)
+  const d = state.decide(m.id, decision, description, { supervisor })
   if (d.status === before) return d
   log(d.status === 'approved'
-    ? `${BOB_NAME} approved mission ${short(d.s256)}: "${d.approved_description}"`
+    ? `${BOB_NAME} approved mission ${short(d.s256)}${d.supervisor === 'rules' ? ' (rules only)' : ''}: "${d.approved_description}"`
     : `${BOB_NAME} denied mission ${m.id}`)
   return d
 }
@@ -157,7 +157,7 @@ function decideReview(r, decision) {
 
 const answer = (x, form) => {
   const decision = form.get('decision') === 'approve' ? 'approve' : 'deny'
-  return x.scopes ? decideReview(x, decision) : decideMission(x, decision, form.get('description'))
+  return x.scopes ? decideReview(x, decision) : decideMission(x, decision, form.get('description'), form.get('supervisor'))
 }
 
 const SESSION = 'bob_session'
@@ -248,16 +248,17 @@ async function personToken(req, res, url, raw) {
   relay(res, await forward(req, raw, PORTS.mockin))
 }
 
-// The supervisor seam: every scope the agent does not already hold is judged against the mission Bob approved, and logged for the next judgement.
+// The supervisor seam: each scope the agent does not yet hold is judged against the approved mission (never by Jev if Bob chose rules only) and logged.
 async function supervise(m, agent, resource, scopes, justification) {
   const mission = { s256: m.s256, status: m.status, blob_b64: m.blob_b64 }
+  const opts = m.supervisor === 'rules' ? { jev: false } : {}
   const named = (state.blob(m)?.approved_resources ?? []).includes(resource)
   const verdicts = []
   for (const scope of scopes) {
     const act = { type: 'token_request', agent, resource, scope, ...(justification ? { justification } : {}) }
     // context is access to the resource itself, which the mission's resources settle; decide() judges Alice's items.
     const d = scope.startsWith('item:')
-      ? await decide({ mission, act, log: state.missionLog(m.s256) })
+      ? await decide({ mission, act, log: state.missionLog(m.s256) }, opts)
         .catch(err => ({ decision: 'REVIEW', by: 'rule', rule: 'supervisor_failed', p: null, model: null, reason: `the supervisor failed (${err.message}), so ${BOB_NAME} decides` }))
       : { decision: named ? 'ALLOW' : 'REVIEW', by: 'rule', rule: named ? 'resource_named' : 'resource_not_named', p: null, model: null,
           reason: named ? 'the mission names this resource' : 'the mission does not name this resource' }
@@ -333,7 +334,7 @@ async function bobApi(req, res, url) {
     const x = kind === 'missions' ? state.mission(id) : state.review(id)
     if (!x) return reply(404, { error: 'not_found' })
     if (!state.isOpen(x)) return reply(409, { error: 'not_pending', status: x.status })
-    const d = kind === 'missions' ? decideMission(x, body.decision, body.description) : decideReview(x, body.decision)
+    const d = kind === 'missions' ? decideMission(x, body.decision, body.description, body.supervisor) : decideReview(x, body.decision)
     return reply(200, { ok: true, status: d.status, ...(d.s256 && kind === 'missions' ? { s256: d.s256 } : {}) })
   }
   return reply(404, { error: 'not_found' })
@@ -366,7 +367,7 @@ export async function startBob({ consent = process.env.CONSENT === '1' } = {}) {
   await startAgentProvider()
   await startMockin(consent)
   await startPersonServerFront()
-  log(`up: person server ${PS} (missions at ${PS}/mission, Bob's page ${PS}/bob, supervisor on auth tokens, mockin behind the front, ${consent ? 'consent required' : 'auto-approve'}), agent provider ${AGENT}`)
+  log(`up: person server ${PS} (missions at ${PS}/mission, Bob's page ${PS}/bob, supervisor/decide.mjs on auth tokens, mockin behind the front, ${consent ? 'consent required' : 'auto-approve'}), agent provider ${AGENT}`)
 }
 
 if (isMain(import.meta)) await startBob()

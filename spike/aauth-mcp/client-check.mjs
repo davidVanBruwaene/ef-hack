@@ -31,8 +31,23 @@ const open = (url, init) => {
 async function bob(url, code, decision) {
   const page = await open(`${url}?code=${encodeURIComponent(code)}`)
   if (!page.ok || !(await page.text()).includes(code)) throw new Error(`approval page ${page.status}`)
-  const res = await open(url, formPost({ code, decision }, asBob))
+  const res = await open(url, formPost({ code, decision, supervisor: 'rules' }, asBob))
   if (!res.ok) throw new Error(`approval POST ${res.status}`)
+}
+
+// Stands in for Bob allowing whatever the supervisor holds under this run's mission, except the scopes a case answers itself.
+function bobAllowsTheRest(s256) {
+  const answeredByCases = new Set(Object.values(CASES).flatMap(c => (c.bob ? [c.bob[0]] : [])))
+  let running = true
+  const loop = (async () => {
+    while (running) {
+      const held = (await call(BOB_API, bobToken, '/state')).reviews
+        .filter(r => r.mission_s256 === s256 && r.status === 'pending' && !r.scopes.some(sc => answeredByCases.has(sc)))
+      for (const r of held) await open(`${PS}/interact`, formPost({ code: r.code, decision: 'approve' }, asBob))
+      await sleep(250)
+    }
+  })()
+  return async () => { running = false; await loop.catch(() => {}) }
 }
 
 // Plays the agent approving its own mission with the code it was handed, then Bob denying it.
@@ -162,12 +177,14 @@ const names = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys
 const unknown = names.filter(n => !CASES[n])
 if (unknown.length) { console.log(`unknown case ${unknown.join(', ')}; cases: ${Object.keys(CASES).join(', ')}`); process.exit(1) }
 
-// A fresh mission per run, so earlier answers do not carry over; it names the items most cases ask for, so the rules-only supervisor allows them.
+// A fresh mission per run, so earlier answers do not carry over. Bob approves it as rules only, so no case depends on what Jev answers.
 const approved = await requestMission(`${DEFAULT_MISSION} Alice's first name, personal site, calendar and email are fine to look at. (check ${Date.now().toString(36)})`, {
   onInteraction: (url, code) => bob(url, code, 'approve'),
 })
-console.log(`mission ${approved.s256.slice(0, 8)}… approved on Bob's page: "${approved.blob.description}"`)
+console.log(`mission ${approved.s256.slice(0, 8)}… approved by Bob, rules only: "${approved.blob.description}"`)
+const stopBob = bobAllowsTheRest(approved.s256)
 let failed = 0
 for (const name of names) if (!(await runCase(name, approved))) failed++
+await stopBob()
 console.log(failed ? `${failed} of ${names.length} failed` : `all ${names.length} passed`)
 process.exitCode = failed ? 1 : 0

@@ -25,6 +25,7 @@ button.deny { color: var(--deny); }
 .why { color: var(--muted); font-size: 14px; margin: 8px 0 0; }
 .said { font-size: 15px; margin: 10px 0 0; padding-left: 10px; border-left: 3px solid var(--line); }
 .item { font-weight: 600; }
+label.check { display: flex; gap: 8px; align-items: center; margin: 12px 0 0; color: var(--ink); }
 .code { font: 600 20px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
 .text { white-space: pre-wrap; }
 `
@@ -106,6 +107,7 @@ export function missionPage(m, { bobName, open }) {
 <form method="post" action="/bob/missions/${esc(m.id)}" class="card">
   <label for="d">Mission. Edit it before approving if you want it narrower.</label>
   <textarea id="d" name="description">${esc(m.description)}</textarea>
+  <label class="check"><input type="checkbox" name="supervisor" value="rules"> Rules only: never send this mission to the model (Jev)</label>
   ${answer('Approve')}
 </form>
 <p class="fine">Lasts 24 hours from approval. Each request your agent makes under it is checked against this text.</p>${home}`)

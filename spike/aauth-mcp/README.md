@@ -108,7 +108,7 @@ On each auth token request, the front judges every scope the agent does not alre
 
 Any DENY refuses the request with `403 denied`. Any REVIEW holds the auth token that mockin minted and answers `202`. The request then appears on Bob's page with the agent's reason, until Bob answers. Otherwise the token goes straight to the agent.
 
-`decide()` comes from `decide-rules.mjs`, a rules-only stand-in with the contract of `supervisor/decide.mjs`. It repeats an earlier answer for the same scope, allows an item the mission text names, and holds everything else for Bob. `supervisor/decide.mjs` adds the full rule table and Jev, and replaces the stand-in once it is on main.
+`decide()` is `supervisor/decide.mjs` (see [supervisor/README.md](../../supervisor/README.md)). Its fixed rules go first. One of them repeats an earlier answer for the same scope, so Bob is not asked twice. Whatever the rules leave open goes to Jev through OpenRouter, and anything Jev is unsure of, or cannot answer, is held for Bob. When Bob approves a mission he can tick "Rules only". Nothing under that mission then goes to Jev, and whatever the rules leave open is held for him. The checks approve their missions that way, so their results never depend on the model.
 
 ## Alice's console API
 
