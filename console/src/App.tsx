@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ListChecksIcon, BellIcon, SlidersHorizontalIcon } from 'lucide-react'
-import { api } from '@/api'
+import { api, SignedOut } from '@/api'
 import type { State } from '@/types'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
@@ -12,6 +12,7 @@ import { pendingGroups } from '@/lib/groups'
 import { Requests } from '@/views/Requests'
 import { Shared } from '@/views/Shared'
 import { Activity } from '@/views/Activity'
+import { SignIn } from '@/views/SignIn'
 
 type Tab = 'requests' | 'shared' | 'activity'
 
@@ -21,14 +22,16 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('requests')
   const [focus, setFocus] = useState<string | null>(null)
   const [drawer, setDrawer] = useState(false)
+  const [signedOut, setSignedOut] = useState(false)
 
   const refresh = useCallback(() => {
     api.getState().then(
       (s) => {
         setState(s)
         setError(null)
+        setSignedOut(false)
       },
-      (e: Error) => setError(e.message),
+      (e: Error) => (e instanceof SignedOut ? setSignedOut(true) : setError(e.message)),
     )
   }, [])
 
@@ -36,6 +39,8 @@ export default function App() {
     refresh()
     return api.subscribe(refresh)
   }, [refresh])
+
+  if (signedOut) return <SignIn onSignedIn={refresh} />
 
   const groups = state ? pendingGroups(state) : []
   const name = state ? `${state.owner.first_name} ${state.owner.last_name}` : ''
@@ -84,6 +89,14 @@ export default function App() {
         <div className="mx-auto w-full max-w-2xl px-4 pt-4">
           <Alert variant="destructive">
             <AlertDescription>Could not reach the server: {error}</AlertDescription>
+          </Alert>
+        </div>
+      ) : null}
+
+      {state?.notice ? (
+        <div className="mx-auto w-full max-w-2xl px-4 pt-4">
+          <Alert>
+            <AlertDescription>{state.notice}</AlertDescription>
           </Alert>
         </div>
       ) : null}
