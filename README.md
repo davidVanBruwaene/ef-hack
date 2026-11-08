@@ -37,6 +37,8 @@ npm run dev        # http://localhost:5173, mock data
 
 Set `VITE_API=live` (and `VITE_API_TARGET` for the server's URL) to use the real console API instead of the mock.
 
+In live mode the dev server also sends the store's routes (`/auth`, `/me`, `/network`, `/invite`, `/join`, `/pair`, `/dev`) to `VITE_STORE_TARGET` (default `http://localhost:8790`). The console then signs in with the store's passkeys and edits the items there, while requests and activity still come from `/api`. Behind a tunnel, set `PUBLIC_URL` to the console's public URL so Vite accepts that hostname, and start the store with the same URL in `RP_ORIGINS` and the hostname in `RP_ID`.
+
 On two laptops, run `npm run bob` on one and `npm run alice` on the other, behind a Cloudflare Tunnel. The spike README covers the setup.
 
 Keep this section current: anyone should be able to run main from a fresh clone.
