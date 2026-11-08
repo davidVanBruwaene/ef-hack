@@ -25,6 +25,16 @@
 <div class="row"><input id="first" placeholder="First name" autocomplete="given-name"><input id="last" placeholder="Last name" autocomplete="family-name"></div>
 <div class="row"><button id="register" class="primary">Create account with a passkey</button></div>
 
+<h2>Sign in with a QR code</h2>
+<div class="row"><button id="qr" class="primary">Show QR code</button></div>
+<div id="qrbox" hidden style="text-align:center">
+  <img id="qrimg" alt="QR code to scan with your phone" width="240" height="240">
+  <p class="hint">Scan with your phone, then type this code there:</p>
+  <p id="qrcode" style="font-size:32px;font-weight:700;letter-spacing:.2em;margin:4px 0"></p>
+  <p class="hint" id="qrstatus"></p>
+  <p class="hint">No phone handy? Open <a id="qrlink" href="#" target="_blank" rel="noopener">the link</a> in another browser window.</p>
+</div>
+
 <h2>Sign in</h2>
 <div class="row"><button id="login" class="primary">Sign in with a passkey</button></div>
 
@@ -59,6 +69,21 @@ $('register').onclick = () => run('register', async () => {
   const cred = await navigator.credentials.create({ publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(o.body) })
   return j('POST', '/auth/register/verify', cred.toJSON())
 })
+$('qr').onclick = async () => {
+  const s = await j('POST', '/auth/pair/start', {})
+  if (s.status !== 200) return show('qr', s)
+  $('qrimg').src = s.body.qr; $('qrcode').textContent = s.body.code; $('qrlink').href = s.body.url; $('qrbox').hidden = false
+  $('qrstatus').textContent = 'Waiting for your phone...'
+  const until = Date.now() + s.body.expires_in * 1000
+  const tick = async () => {
+    const r = await j('POST', '/auth/pair/claim', { pair_id: s.body.pair_id, poll_token: s.body.poll_token })
+    if (r.body?.status === 'signed_in') { $('qrbox').hidden = true; return show('qr sign-in', r) }
+    if (r.status === 404 || Date.now() > until) { $('qrstatus').textContent = 'Expired. Click Show QR code again.'; return }
+    $('qrstatus').textContent = r.body?.status === 'joined' ? 'Code accepted. Waiting for the passkey...' : 'Waiting for your phone...'
+    setTimeout(tick, 1500)
+  }
+  tick()
+}
 $('login').onclick = () => run('sign in', async () => {
   const o = await j('POST', '/auth/login/options', {})
   const cred = await navigator.credentials.get({ publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(o.body) })

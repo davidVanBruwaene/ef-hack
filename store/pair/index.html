@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in on your computer</title>
+<style>
+  :root { color-scheme: light dark; --bg:#faf8f4; --ink:#1b1a17; --muted:#5e5a50; --line:#d9d4c7; --accent:#0f6b63; --card:#fff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14130f; --ink:#f3f0e8; --muted:#b3ad9f; --line:#35332b; --accent:#4fc3b3; --card:#1e1d18; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width:420px; margin:0 auto; padding:28px 20px; display:flex; flex-direction:column; gap:16px; }
+  h1 { margin:0; font-size:24px; line-height:1.2; }
+  p { margin:0; color:var(--muted); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; display:flex; flex-direction:column; gap:12px; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:14px; color:var(--muted); }
+  input { min-height:48px; padding:0 14px; border-radius:10px; border:1px solid var(--muted); background:var(--bg); color:var(--ink); font:inherit; font-size:18px; }
+  input.code { letter-spacing:.3em; text-align:center; font-size:26px; font-variant-numeric:tabular-nums; }
+  button { min-height:48px; border-radius:12px; border:1px solid var(--muted); background:var(--card); color:var(--ink); font:inherit; font-weight:600; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:var(--bg); }
+  button:disabled { opacity:.5; }
+  .error { color:#b3261e; font-size:14px; min-height:1.4em; }
+  .ok { color:var(--accent); font-weight:600; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sign in on your computer</h1>
+  <p id="intro">Type the code your computer is showing. Only continue if you started this yourself.</p>
+
+  <section class="card" id="step-code">
+    <label>Code from your computer
+      <input id="code" class="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+    </label>
+    <button id="join" class="primary">Continue</button>
+  </section>
+
+  <section class="card" id="step-auth" hidden>
+    <button id="login" class="primary">Sign in with my passkey</button>
+    <p style="text-align:center">or</p>
+    <label>First name <input id="first" autocomplete="given-name"></label>
+    <label>Last name <input id="last" autocomplete="family-name"></label>
+    <button id="register">Create an account with a passkey</button>
+  </section>
+
+  <section class="card" id="step-done" hidden>
+    <div class="ok">Done. You are signed in on your computer.</div>
+    <p>You can close this page. Your passkey stays on this phone.</p>
+    <div id="codes" hidden>
+      <p><strong>Save these recovery codes.</strong> Each works once if you lose this phone. They are not shown again.</p>
+      <pre id="codelist" style="white-space:pre-wrap;font-size:16px"></pre>
+    </div>
+  </section>
+
+  <div class="error" id="error" role="alert"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id)
+const pair = new URLSearchParams(location.search).get('c')
+const err = (m) => { $('error').textContent = m || '' }
+async function post(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) })
+  return { status: r.status, body: await r.json().catch(() => null) }
+}
+if (!pair) { $('step-code').hidden = true; err('This link is missing its pairing code. Scan the QR code again.') }
+
+$('join').onclick = async () => {
+  err(''); $('join').disabled = true
+  const r = await post('/auth/pair/join', { pair_id: pair, code: $('code').value.trim() })
+  $('join').disabled = false
+  if (r.status === 200) { $('step-code').hidden = true; $('step-auth').hidden = false; $('intro').textContent = 'Now confirm with a passkey on this phone.' }
+  else if (r.status === 404) err('This QR code has expired. Start again on your computer.')
+  else err(r.body?.attempts_left === 0 ? 'Too many wrong codes. Start again on your computer.' : `That code is not right. ${r.body?.attempts_left ?? ''} tries left.`)
+}
+async function finish(r) {
+  if (r.status !== 200) return err('That did not work (' + (r.body?.error ?? r.status) + '). Try again, or start over on your computer.')
+  $('step-auth').hidden = true; $('step-done').hidden = false; $('intro').hidden = true
+  if (r.body?.recovery_codes) { $('codes').hidden = false; $('codelist').textContent = r.body.recovery_codes.join('\n') }
+}
+$('login').onclick = async () => {
+  err('')
+  try {
+    const o = await post('/auth/login/options')
+    const cred = await navigator.credentials.get({ publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(o.body) })
+    await finish(await post('/auth/login/verify?pair=' + encodeURIComponent(pair), cred.toJSON()))
+  } catch (e) { err(e.name === 'NotAllowedError' ? 'Cancelled.' : e.message) }
+}
+$('register').onclick = async () => {
+  err('')
+  try {
+    const o = await post('/auth/register/options', { first_name: $('first').value, last_name: $('last').value })
+    if (o.status !== 200) return err('Enter your first and last name.')
+    const cred = await navigator.credentials.create({ publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(o.body) })
+    await finish(await post('/auth/register/verify?pair=' + encodeURIComponent(pair), cred.toJSON()))
+  } catch (e) { err(e.name === 'NotAllowedError' ? 'Cancelled.' : e.message) }
+}
+</script>
+</body>
+</html>

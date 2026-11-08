@@ -9,6 +9,9 @@ export function createApp(config: Config): Hono {
   const app = new Hono()
   app.route('/', createAuth(db, config))
   app.get('/health', (c) => c.json({ ok: true }))
+  // The page a phone opens after scanning the QR code.
+  const pairPage = readFileSync(new URL('../pair/index.html', import.meta.url), 'utf8')
+  app.get('/pair', (c) => c.html(pairPage))
   // Local testing page for real browser passkeys. Not for production: set STORE_DEV_PAGE=0 to hide it.
   if (config.devPage) {
     const page = readFileSync(new URL('../dev/index.html', import.meta.url), 'utf8')

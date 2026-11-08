@@ -2,7 +2,8 @@ import { Hono } from 'hono'
 import type { Context, MiddlewareHandler } from 'hono'
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import type { CookieOptions } from 'hono/utils/cookie'
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
+import QRCode from 'qrcode'
 import type { DatabaseSync, SQLInputValue, StatementSync } from 'node:sqlite'
 import {
   generateRegistrationOptions,
@@ -38,6 +39,20 @@ interface Session {
   token: string
 }
 
+const PAIR_MS = 5 * 60 * 1000
+const PAIR_ATTEMPTS = 3
+
+// QR sign-in: the computer shows a QR code and a code; the phone opens the link, types the code,
+// then registers or signs in with its own passkey. The computer then claims a session.
+interface Pairing {
+  pollHash: string
+  code: string
+  status: 'pending' | 'joined' | 'approved'
+  userId?: string
+  attempts: number
+  exp: number
+}
+
 type Env = { Variables: { session: Session } }
 type Ctx = Context<Env>
 
@@ -49,6 +64,7 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
   const secure = config.origins.every((o) => o.startsWith('https://'))
   const challenges = new Map<string, Challenge>()
   const hits = new Map<string, number[]>() // ip -> timestamps, for the recovery endpoint
+  const pairings = new Map<string, Pairing>()
 
   const q = {
     userById: one<UserRow>(db.prepare('SELECT * FROM users WHERE id = ?')),
@@ -127,6 +143,26 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
     )
   }
 
+  function livePairing(id: unknown): Pairing | null {
+    const p = typeof id === 'string' ? pairings.get(id) : undefined
+    if (!p) return null
+    if (p.exp < Date.now()) {
+      pairings.delete(id as string)
+      return null
+    }
+    return p
+  }
+
+  const sameSecret = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b))
+
+  // A phone finishing a QR sign-in must have entered the right code first.
+  function pairingForVerify(c: Ctx): { id: string; p: Pairing } | null | 'bad' {
+    const id = c.req.query('pair')
+    if (!id) return null
+    const p = livePairing(id)
+    return p && p.status === 'joined' ? { id, p } : 'bad'
+  }
+
   const publicUser = (u: UserRow) => ({
     id: u.id,
     display_name: u.display_name,
@@ -174,6 +210,8 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
   })
 
   app.post('/auth/register/verify', async (c) => {
+    const pair = pairingForVerify(c)
+    if (pair === 'bad') return c.json({ error: 'pair_not_ready' }, 403)
     const e = takeChallenge(c, 'register')
     if (!e?.pending) return c.json({ error: 'challenge_expired' }, 400)
     const body = (await c.req.json().catch(() => null)) as RegistrationResponseJSON | null
@@ -196,6 +234,7 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
     storeCredential(userId, result.registrationInfo, 'First passkey')
     const codes = issueRecoveryCodes(userId)
     startSession(c, userId, 'passkey')
+    if (pair) Object.assign(pair.p, { status: 'approved', userId })
     // The plain codes are shown exactly once; only hashes are stored.
     return c.json({ user: publicUser(q.userById(userId)!), recovery_codes: codes })
   })
@@ -208,6 +247,8 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
   })
 
   app.post('/auth/login/verify', async (c) => {
+    const pair = pairingForVerify(c)
+    if (pair === 'bad') return c.json({ error: 'pair_not_ready' }, 403)
     const e = takeChallenge(c, 'login')
     if (!e) return c.json({ error: 'challenge_expired' }, 400)
     const body = (await c.req.json().catch(() => null)) as AuthenticationResponseJSON | null
@@ -237,7 +278,51 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
     if (!verified) return c.json({ error: 'verification_failed' }, 401)
     q.bump.run(newCounter, Date.now(), row.id)
     startSession(c, row.user_id, 'passkey')
+    if (pair) Object.assign(pair.p, { status: 'approved', userId: row.user_id })
     return c.json({ user: publicUser(q.userById(row.user_id)!) })
+  })
+
+  // ---- QR sign-in ----
+  app.post('/auth/pair/start', async (c) => {
+    const id = randomBytes(16).toString('base64url')
+    const pollToken = randomBytes(24).toString('base64url')
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0')
+    pairings.set(id, { pollHash: sha256(pollToken), code, status: 'pending', attempts: 0, exp: Date.now() + PAIR_MS })
+    const base = config.publicUrl ?? c.req.header('origin')!
+    const url = `${base}/pair?c=${id}`
+    return c.json({
+      pair_id: id,
+      poll_token: pollToken,
+      code,
+      url,
+      qr: await QRCode.toDataURL(url, { margin: 1, width: 280 }),
+      expires_in: PAIR_MS / 1000,
+    })
+  })
+
+  // The phone proves it can see the computer's screen by typing the code.
+  app.post('/auth/pair/join', async (c) => {
+    const body = await c.req.json().catch(() => ({}))
+    const p = livePairing(body.pair_id)
+    if (!p || p.status !== 'pending') return c.json({ error: 'pair_expired' }, 404)
+    if (sameSecret(String(body.code ?? ''), p.code)) {
+      p.status = 'joined'
+      return c.json({ ok: true })
+    }
+    p.attempts += 1
+    if (p.attempts >= PAIR_ATTEMPTS) pairings.delete(body.pair_id)
+    return c.json({ error: 'wrong_code', attempts_left: Math.max(0, PAIR_ATTEMPTS - p.attempts) }, 403)
+  })
+
+  // The computer polls; only the holder of the poll token can take the session, and only once.
+  app.post('/auth/pair/claim', async (c) => {
+    const body = await c.req.json().catch(() => ({}))
+    const p = livePairing(body.pair_id)
+    if (!p || !sameSecret(sha256(String(body.poll_token ?? '')), p.pollHash)) return c.json({ error: 'pair_expired' }, 404)
+    if (p.status !== 'approved' || !p.userId) return c.json({ status: p.status })
+    pairings.delete(body.pair_id)
+    startSession(c, p.userId, 'passkey')
+    return c.json({ status: 'signed_in', user: publicUser(q.userById(p.userId)!) })
   })
 
   app.post('/auth/logout', (c) => {

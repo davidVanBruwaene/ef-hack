@@ -154,3 +154,86 @@ test('signed-out callers cannot touch passkeys', async () => {
   assert.equal((await c.call('GET', '/auth/credentials')).status, 401)
   assert.equal((await c.call('POST', '/auth/recovery-codes', {})).status, 401)
 })
+
+// ---- QR sign-in: the computer shows the QR code, the phone approves with its own passkey. ----
+
+async function startPairing(desktop: Client) {
+  const s = await desktop.call('POST', '/auth/pair/start', {})
+  assert.equal(s.status, 200)
+  assert.match(s.json.url, /^http:\/\/localhost:5173\/pair\?c=/)
+  assert.match(s.json.qr, /^data:image\/png;base64,/)
+  assert.match(s.json.code, /^\d{6}$/)
+  return s.json as { pair_id: string; poll_token: string; code: string }
+}
+
+const claim = (desktop: Client, p: { pair_id: string; poll_token: string }) =>
+  desktop.call('POST', '/auth/pair/claim', { pair_id: p.pair_id, poll_token: p.poll_token })
+
+test('QR sign-in: a phone creates an account and the computer is signed in', async () => {
+  const app = createApp(config)
+  const desktop = client(app), phone = client(app)
+  const key = new SoftPasskey()
+  const p = await startPairing(desktop)
+
+  assert.equal((await claim(desktop, p)).json.status, 'pending')
+  assert.equal((await phone.call('POST', '/auth/pair/join', { pair_id: p.pair_id, code: p.code })).status, 200)
+  assert.equal((await claim(desktop, p)).json.status, 'joined')
+
+  const opts = await phone.call('POST', '/auth/register/options', { first_name: 'Grace', last_name: 'Hopper' })
+  const reg = await phone.call('POST', `/auth/register/verify?pair=${p.pair_id}`, key.create(opts.json, ORIGIN))
+  assert.equal(reg.status, 200)
+
+  const done = await claim(desktop, p)
+  assert.equal(done.json.status, 'signed_in')
+  assert.equal(done.json.user.first_name, 'Grace')
+  assert.equal((await desktop.call('GET', '/auth/me')).json.user.last_name, 'Hopper')
+  // One use only.
+  assert.equal((await claim(desktop, p)).status, 404)
+})
+
+test('QR sign-in: an existing passkey on the phone signs the computer in', async () => {
+  const app = createApp(config)
+  const key = new SoftPasskey()
+  const first = client(app)
+  const reg = await register(first, key, 'Grace', 'Hopper')
+
+  const desktop = client(app), phone = client(app)
+  const p = await startPairing(desktop)
+  await phone.call('POST', '/auth/pair/join', { pair_id: p.pair_id, code: p.code })
+  const opts = await phone.call('POST', '/auth/login/options')
+  assert.equal((await phone.call('POST', `/auth/login/verify?pair=${p.pair_id}`, key.get(opts.json, ORIGIN))).status, 200)
+  const done = await claim(desktop, p)
+  assert.equal(done.json.user.id, reg.json.user.id)
+})
+
+test('QR sign-in: the phone cannot finish without the right code', async () => {
+  const app = createApp(config)
+  const desktop = client(app), phone = client(app)
+  const key = new SoftPasskey()
+  const p = await startPairing(desktop)
+
+  // Skipping the code step is refused.
+  const opts = await phone.call('POST', '/auth/register/options', { first_name: 'Eve', last_name: 'Attacker' })
+  assert.equal((await phone.call('POST', `/auth/register/verify?pair=${p.pair_id}`, key.create(opts.json, ORIGIN))).status, 403)
+
+  // Three wrong codes kill the pairing, even for the right code afterwards.
+  const wrong = p.code === '000000' ? '111111' : '000000'
+  for (let i = 0; i < 3; i++) assert.equal((await phone.call('POST', '/auth/pair/join', { pair_id: p.pair_id, code: wrong })).status, 403)
+  assert.equal((await phone.call('POST', '/auth/pair/join', { pair_id: p.pair_id, code: p.code })).status, 404)
+  assert.equal((await claim(desktop, p)).status, 404)
+})
+
+test('QR sign-in: only the computer that started it can take the session', async () => {
+  const app = createApp(config)
+  const desktop = client(app), phone = client(app), other = client(app)
+  const key = new SoftPasskey()
+  const p = await startPairing(desktop)
+  await phone.call('POST', '/auth/pair/join', { pair_id: p.pair_id, code: p.code })
+  const opts = await phone.call('POST', '/auth/register/options', { first_name: 'Grace', last_name: 'Hopper' })
+  await phone.call('POST', `/auth/register/verify?pair=${p.pair_id}`, key.create(opts.json, ORIGIN))
+
+  const stolen = await other.call('POST', '/auth/pair/claim', { pair_id: p.pair_id, poll_token: 'guess' })
+  assert.equal(stolen.status, 404)
+  assert.equal((await other.call('GET', '/auth/me')).json.user, null)
+  assert.equal((await claim(desktop, p)).json.status, 'signed_in')
+})
