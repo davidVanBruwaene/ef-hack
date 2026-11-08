@@ -1,6 +1,13 @@
 import { useState } from 'react'
-import { api } from '../api'
-import type { Rule, State } from '../types'
+import { GlobeIcon, PlusIcon } from 'lucide-react'
+import { toast } from 'sonner'
+import { api } from '@/api'
+import type { Rule, State } from '@/types'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
 const RULES: { id: Rule; name: string }[] = [
   { id: 'everyone', name: 'Everyone' },
@@ -11,71 +18,92 @@ const RULES: { id: Rule; name: string }[] = [
 export function Shared({ state, refresh }: { state: State; refresh: () => void }) {
   const [label, setLabel] = useState('')
   const [url, setUrl] = useState('')
-  const [err, setErr] = useState<string | null>(null)
 
-  async function guard(fn: () => Promise<void>) {
-    setErr(null)
+  async function guard(fn: () => Promise<void>, ok?: string) {
     try {
       await fn()
+      if (ok) toast.success(ok)
       refresh()
     } catch (e) {
-      setErr((e as Error).message)
+      toast.error((e as Error).message)
     }
   }
 
   return (
-    <main className="page">
-      <div className="column">
-        <h1>What you share</h1>
-        <p className="muted">Every item is a link with a rule. First and last name start as Everyone.</p>
-        <div className="list">
-          {state.items.map((it) => (
-            <div className="row" key={it.id}>
-              <div className="grow">
-                <div className="row-title">{it.label}</div>
-                <div className="row-sub">{it.url}</div>
+    <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">What you share</CardTitle>
+          <CardDescription>
+            Each item is a link with a rule. Everyone: any verified agent. Ask me: you approve each request. Only me: never shared.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <ul className="divide-y">
+            {state.items.map((it) => (
+              <li key={it.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+                <GlobeIcon className="size-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1 basis-40">
+                  <div className="text-sm font-medium">{it.label}</div>
+                  <div className="truncate text-xs text-muted-foreground">{it.url}</div>
+                </div>
+                <ToggleGroup
+                  variant="outline"
+                  size="sm"
+                  spacing={0}
+                  value={[it.rule]}
+                  onValueChange={(v) => {
+                    const next = v[0] as Rule | undefined
+                    if (next && next !== it.rule) guard(() => api.setRule(it.id, next))
+                  }}
+                  aria-label={`Rule for ${it.label}`}
+                >
+                  {RULES.map((r) => (
+                    <ToggleGroupItem key={r.id} value={r.id} className="data-pressed:bg-primary data-pressed:text-primary-foreground">
+                      {r.name}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Add a link</CardTitle>
+          <CardDescription>New links start as Ask me.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={(e) => {
+              e.preventDefault()
+              guard(async () => {
+                await api.addLink(label.trim(), url.trim())
+                setLabel('')
+                setUrl('')
+              }, 'Link added')
+            }}
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="link-name">Name</Label>
+                <Input id="link-name" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Project page" required />
               </div>
-              <div className="seg" role="radiogroup" aria-label={`Rule for ${it.label}`}>
-                {RULES.map((r) => (
-                  <button
-                    key={r.id}
-                    role="radio"
-                    aria-checked={it.rule === r.id}
-                    className={it.rule === r.id ? `seg-btn on ${r.id}` : 'seg-btn'}
-                    onClick={() => guard(() => api.setRule(it.id, r.id))}
-                  >
-                    {r.name}
-                  </button>
-                ))}
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="link-url">Link</Label>
+                <Input id="link-url" type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" required />
               </div>
             </div>
-          ))}
-        </div>
-
-        <form
-          className="card form"
-          onSubmit={(e) => {
-            e.preventDefault()
-            guard(async () => {
-              await api.addLink(label.trim(), url.trim())
-              setLabel('')
-              setUrl('')
-            })
-          }}
-        >
-          <div className="card-title">Add a link</div>
-          <label className="field">
-            <span>Name</span>
-            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Project page" required />
-          </label>
-          <label className="field">
-            <span>Link</span>
-            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" type="url" required />
-          </label>
-          <button className="btn primary" type="submit">Add link</button>
-        </form>
-        {err ? <p className="error" role="alert">{err}</p> : null}
-      </div>
+            <Button type="submit" className="self-start">
+              <PlusIcon className="size-4" />
+              Add link
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </main>
   )
 }
