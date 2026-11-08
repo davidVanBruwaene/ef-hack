@@ -21,7 +21,7 @@ The passkey store (accounts and sign-in; Node 22.18 or later) lives in `store/`:
 cd store
 npm ci
 npm run typecheck  # tsc, no emit
-npm test           # 11 tests with a software passkey, no browser needed
+npm test           # 12 tests with a software passkey, no browser needed
 npm start          # http://localhost:8790
 ```
 

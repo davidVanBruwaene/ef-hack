@@ -58,6 +58,7 @@
 <script>
 const $ = (id) => document.getElementById(id)
 const pair = new URLSearchParams(location.search).get('c')
+let joinToken = ''
 const err = (m) => { $('error').textContent = m || '' }
 async function post(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) })
@@ -69,7 +70,7 @@ $('join').onclick = async () => {
   err(''); $('join').disabled = true
   const r = await post('/auth/pair/join', { pair_id: pair, code: $('code').value.trim() })
   $('join').disabled = false
-  if (r.status === 200) { $('step-code').hidden = true; $('step-auth').hidden = false; $('intro').textContent = 'Now confirm with a passkey on this phone.' }
+  if (r.status === 200) { joinToken = r.body.join_token; $('step-code').hidden = true; $('step-auth').hidden = false; $('intro').textContent = 'Now confirm with a passkey on this phone.' }
   else if (r.status === 404) err('This QR code has expired. Start again on your computer.')
   else err(r.body?.attempts_left === 0 ? 'Too many wrong codes. Start again on your computer.' : `That code is not right. ${r.body?.attempts_left ?? ''} tries left.`)
 }
@@ -83,7 +84,7 @@ $('login').onclick = async () => {
   try {
     const o = await post('/auth/login/options')
     const cred = await navigator.credentials.get({ publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(o.body) })
-    await finish(await post('/auth/login/verify?pair=' + encodeURIComponent(pair), cred.toJSON()))
+    await finish(await post('/auth/login/verify?pair=' + encodeURIComponent(pair) + '&jt=' + encodeURIComponent(joinToken), cred.toJSON()))
   } catch (e) { err(e.name === 'NotAllowedError' ? 'Cancelled.' : e.message) }
 }
 $('register').onclick = async () => {
@@ -92,7 +93,7 @@ $('register').onclick = async () => {
     const o = await post('/auth/register/options', { first_name: $('first').value, last_name: $('last').value })
     if (o.status !== 200) return err('Enter your first and last name.')
     const cred = await navigator.credentials.create({ publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(o.body) })
-    await finish(await post('/auth/register/verify?pair=' + encodeURIComponent(pair), cred.toJSON()))
+    await finish(await post('/auth/register/verify?pair=' + encodeURIComponent(pair) + '&jt=' + encodeURIComponent(joinToken), cred.toJSON()))
   } catch (e) { err(e.name === 'NotAllowedError' ? 'Cancelled.' : e.message) }
 }
 </script>

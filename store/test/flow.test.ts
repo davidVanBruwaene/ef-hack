@@ -176,11 +176,13 @@ test('QR sign-in: a phone creates an account and the computer is signed in', asy
   const p = await startPairing(desktop)
 
   assert.equal((await claim(desktop, p)).json.status, 'pending')
-  assert.equal((await phone.call('POST', '/auth/pair/join', { pair_id: p.pair_id, code: p.code })).status, 200)
+  const joined = await phone.call('POST', '/auth/pair/join', { pair_id: p.pair_id, code: p.code })
+  assert.equal(joined.status, 200)
+  const jt = joined.json.join_token
   assert.equal((await claim(desktop, p)).json.status, 'joined')
 
   const opts = await phone.call('POST', '/auth/register/options', { first_name: 'Grace', last_name: 'Hopper' })
-  const reg = await phone.call('POST', `/auth/register/verify?pair=${p.pair_id}`, key.create(opts.json, ORIGIN))
+  const reg = await phone.call('POST', `/auth/register/verify?pair=${p.pair_id}&jt=${jt}`, key.create(opts.json, ORIGIN))
   assert.equal(reg.status, 200)
 
   const done = await claim(desktop, p)
@@ -199,9 +201,9 @@ test('QR sign-in: an existing passkey on the phone signs the computer in', async
 
   const desktop = client(app), phone = client(app)
   const p = await startPairing(desktop)
-  await phone.call('POST', '/auth/pair/join', { pair_id: p.pair_id, code: p.code })
+  const jt = (await phone.call('POST', '/auth/pair/join', { pair_id: p.pair_id, code: p.code })).json.join_token
   const opts = await phone.call('POST', '/auth/login/options')
-  assert.equal((await phone.call('POST', `/auth/login/verify?pair=${p.pair_id}`, key.get(opts.json, ORIGIN))).status, 200)
+  assert.equal((await phone.call('POST', `/auth/login/verify?pair=${p.pair_id}&jt=${jt}`, key.get(opts.json, ORIGIN))).status, 200)
   const done = await claim(desktop, p)
   assert.equal(done.json.user.id, reg.json.user.id)
 })
@@ -228,12 +230,27 @@ test('QR sign-in: only the computer that started it can take the session', async
   const desktop = client(app), phone = client(app), other = client(app)
   const key = new SoftPasskey()
   const p = await startPairing(desktop)
-  await phone.call('POST', '/auth/pair/join', { pair_id: p.pair_id, code: p.code })
+  const jt = (await phone.call('POST', '/auth/pair/join', { pair_id: p.pair_id, code: p.code })).json.join_token
   const opts = await phone.call('POST', '/auth/register/options', { first_name: 'Grace', last_name: 'Hopper' })
-  await phone.call('POST', `/auth/register/verify?pair=${p.pair_id}`, key.create(opts.json, ORIGIN))
+  await phone.call('POST', `/auth/register/verify?pair=${p.pair_id}&jt=${jt}`, key.create(opts.json, ORIGIN))
 
   const stolen = await other.call('POST', '/auth/pair/claim', { pair_id: p.pair_id, poll_token: 'guess' })
   assert.equal(stolen.status, 404)
   assert.equal((await other.call('GET', '/auth/me')).json.user, null)
   assert.equal((await claim(desktop, p)).json.status, 'signed_in')
+})
+
+test('QR sign-in: someone who only saw the QR code cannot finish the pairing after the real phone joins', async () => {
+  const app = createApp(config)
+  const desktop = client(app), phone = client(app), lurker = client(app)
+  const p = await startPairing(desktop)
+  await phone.call('POST', '/auth/pair/join', { pair_id: p.pair_id, code: p.code })
+
+  // The lurker knows the pair id from the QR code but never typed the code, so has no join token.
+  const key = new SoftPasskey()
+  const opts = await lurker.call('POST', '/auth/register/options', { first_name: 'Eve', last_name: 'Lurker' })
+  assert.equal((await lurker.call('POST', `/auth/register/verify?pair=${p.pair_id}`, key.create(opts.json, ORIGIN))).status, 403)
+  const opts2 = await lurker.call('POST', '/auth/register/options', { first_name: 'Eve', last_name: 'Lurker' })
+  assert.equal((await lurker.call('POST', `/auth/register/verify?pair=${p.pair_id}&jt=guess`, key.create(opts2.json, ORIGIN))).status, 403)
+  assert.equal((await claim(desktop, p)).json.status, 'joined')
 })

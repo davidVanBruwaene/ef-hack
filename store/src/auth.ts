@@ -46,6 +46,7 @@ const PAIR_ATTEMPTS = 3
 // then registers or signs in with its own passkey. The computer then claims a session.
 interface Pairing {
   pollHash: string
+  joinHash?: string
   code: string
   status: 'pending' | 'joined' | 'approved'
   userId?: string
@@ -160,7 +161,8 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
     const id = c.req.query('pair')
     if (!id) return null
     const p = livePairing(id)
-    return p && p.status === 'joined' ? { id, p } : 'bad'
+    // Only the phone that typed the code holds the join token, so nobody else can finish the pairing.
+    return p && p.status === 'joined' && p.joinHash && sameSecret(sha256(c.req.query('jt') ?? ''), p.joinHash) ? { id, p } : 'bad'
   }
 
   const publicUser = (u: UserRow) => ({
@@ -306,8 +308,10 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
     const p = livePairing(body.pair_id)
     if (!p || p.status !== 'pending') return c.json({ error: 'pair_expired' }, 404)
     if (sameSecret(String(body.code ?? ''), p.code)) {
+      const joinToken = randomBytes(24).toString('base64url')
       p.status = 'joined'
-      return c.json({ ok: true })
+      p.joinHash = sha256(joinToken)
+      return c.json({ ok: true, join_token: joinToken })
     }
     p.attempts += 1
     if (p.attempts >= PAIR_ATTEMPTS) pairings.delete(body.pair_id)
