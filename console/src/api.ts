@@ -17,11 +17,14 @@ export class SignedOut extends Error {}
 
 const token = () => localStorage.getItem('console_token') ?? ''
 
+// Signed in to the store, the sid cookie picks the owner at /api, and a bearer would override it.
+let viaStore = false
+
 async function call(path: string, body?: unknown): Promise<unknown> {
   const res = await fetch(path, {
     method: body ? 'POST' : 'GET',
     headers: {
-      ...(token() ? { Authorization: `Bearer ${token()}` } : {}),
+      ...(token() && !viaStore ? { Authorization: `Bearer ${token()}` } : {}),
       ...(body ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -50,7 +53,8 @@ async function storeUser(): Promise<StoreUser | null | undefined> {
   return body && typeof body === 'object' && 'user' in body ? body.user : undefined
 }
 
-let viaStore = false
+// On the people network /api names items <member id>/<item id>; the store names them <item id>.
+const local = (id: string) => id.slice(id.indexOf('/') + 1)
 
 const liveApi: Api = {
   getState: async () => {
@@ -67,7 +71,11 @@ const liveApi: Api = {
       items: items.map(({ value, ...it }) => ({ ...it, url: value })),
       ...(mcp instanceof Error
         ? { requesters: [], asks: [], disclosures: [], notice: `Requests and activity are unavailable: ${mcp.message}` }
-        : { requesters: mcp.requesters, asks: mcp.asks, disclosures: mcp.disclosures }),
+        : {
+            requesters: mcp.requesters,
+            asks: mcp.asks.map((a) => ({ ...a, item_id: local(a.item_id) })),
+            disclosures: mcp.disclosures.map((d) => ({ ...d, disclosed: (d.disclosed ?? []).map(local), withheld: (d.withheld ?? []).map(local) })),
+          }),
     }
   },
   decideAsk: async (id, decision, remember) => {
