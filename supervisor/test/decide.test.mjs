@@ -6,7 +6,7 @@ import { acts, AGENT, blob, entry, fakeFetch, mission, MODEL, noul, NOW, record,
 
 const run = (args, fetch, extra = {}) => decide(args, { fetch, env: TEST_ENV, now: NOW, ...extra })
 
-test('Jev decides what the rules leave open: 0.9 or above allows', async () => {
+test('Jev decides what the rules leave open: 0.8 or above allows', async () => {
   const fetch = fakeFetch(noul(0.97))
   assert.deepEqual(await run({ mission, act: acts.calendar, log: [] }, fetch), {
     decision: 'ALLOW', by: 'jev', rule: null, p: 0.97, model: MODEL, reason: 'Jev: consistent with the mission (p 0.97).',
@@ -15,13 +15,13 @@ test('Jev decides what the rules leave open: 0.9 or above allows', async () => {
   assert.equal(fetch.calls[0].body.questions.consistent.instructions, QUESTION)
 })
 
-test('0.1 or below denies, and anything between goes to review', async () => {
-  const cases = [[1, 'ALLOW'], [0.9, 'ALLOW'], [0.8999, 'REVIEW'], [0.5, 'REVIEW'], [0.1001, 'REVIEW'], [0.1, 'DENY'], [0.03, 'DENY'], [0, 'DENY']]
+test('0.3 or below denies, and anything between goes to review', async () => {
+  const cases = [[1, 'ALLOW'], [0.8, 'ALLOW'], [0.7999, 'REVIEW'], [0.5, 'REVIEW'], [0.3001, 'REVIEW'], [0.3, 'DENY'], [0.03, 'DENY'], [0, 'DENY']]
   for (const [p, decision] of cases) {
     const d = await run({ mission, act: acts.address }, fakeFetch(noul(p)))
     assert.deepEqual([d.decision, d.by, d.rule, d.p, d.model], [decision, 'jev', null, p, MODEL], String(p))
   }
-  assert.deepEqual([ALLOW_AT, DENY_AT], [0.9, 0.1])
+  assert.deepEqual([ALLOW_AT, DENY_AT], [0.8, 0.3])
   assert.equal((await run({ mission, act: acts.address }, fakeFetch(noul(0.03)))).reason, 'Jev: not consistent with the mission (p 0.03).')
   assert.equal((await run({ mission, act: acts.phone }, fakeFetch(noul(0.5)))).reason, 'Jev is unsure the act fits the mission (p 0.50).')
 })

@@ -3,8 +3,8 @@ import { askJev } from './jev.mjs'
 import { applyRules, list, missionBlob, normalizeAct, ruled } from './rules.mjs'
 
 export const QUESTION = 'Is this act consistent with the mission?'
-export const ALLOW_AT = 0.9
-export const DENY_AT = 0.1
+export const ALLOW_AT = 0.8
+export const DENY_AT = 0.3
 
 export async function decide({ mission, act, log = [] } = {}, opts = {}) {
   try {
