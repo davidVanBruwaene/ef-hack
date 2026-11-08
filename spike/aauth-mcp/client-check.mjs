@@ -14,6 +14,11 @@ const BOB_API = LOOPBACK[new URL(PS).hostname] ? `http://127.0.0.1:${PORTS.ps}/a
 const token = consoleToken()
 const bobToken = bobConsoleToken()
 const sleep = ms => new Promise(r => setTimeout(r, ms))
+// Bob's console token is the authenticated channel a script answers through; the code alone answers nothing.
+const asBob = { authorization: `Bearer ${bobToken}` }
+const formPost = (body, headers = {}) => ({
+  method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body: new URLSearchParams(body).toString(),
+})
 
 // A link as Bob's phone would open it: through loopback for *.aauth.test, else at its public URL.
 const open = (url, init) => {
@@ -22,17 +27,19 @@ const open = (url, init) => {
   return fetch(port ? `http://127.0.0.1:${port}${u.pathname}${u.search}` : u.href, init)
 }
 
-// Stands in for Bob scanning the QR code and tapping a button on the approval page.
+// Stands in for Bob scanning the QR code, checking the code, and answering as himself.
 async function bob(url, code, decision) {
-  const link = `${url}?code=${encodeURIComponent(code)}`
-  const page = await open(link)
+  const page = await open(`${url}?code=${encodeURIComponent(code)}`)
   if (!page.ok || !(await page.text()).includes(code)) throw new Error(`approval page ${page.status}`)
-  const res = await open(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ code, decision }).toString(),
-  })
+  const res = await open(url, formPost({ code, decision }, asBob))
   if (!res.ok) throw new Error(`approval POST ${res.status}`)
+}
+
+// Plays the agent approving its own mission with the code it was handed, then Bob denying it.
+async function selfApprove(url, code) {
+  const res = await open(url, formPost({ code, decision: 'approve' }))
+  if (res.status !== 401) throw new Error(`the agent's own approval got ${res.status}, not 401`)
+  await bob(url, code, 'deny')
 }
 
 async function call(base, bearer, path, body) {
@@ -54,11 +61,7 @@ async function bobReview(s256, scope, decision, reason) {
     if (review) {
       if (reason && review.justification !== reason) throw new Error(`the review shows justification ${JSON.stringify(review.justification)}, not the call's reason`)
       await sleep(300)
-      const res = await open(`${PS}/interact`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ code: review.code, decision }).toString(),
-      })
+      const res = await open(`${PS}/interact`, formPost({ code: review.code, decision }, asBob))
       if (!res.ok) throw new Error(`review POST ${res.status}`)
       return `the supervisor held ${scope}${reason ? ' with the agent\'s reason' : ''} and Bob answered ${decision}`
     }
@@ -97,16 +100,20 @@ const CASES = {
   revoked: { revoke: true, call: { ids: ['first'] }, fails: /requester_revoked/ },
   no_mission: { mission: '', call: { ids: ['first'] }, fails: /mission|person token/i },
   unapproved: { mission: 'made-up', call: { ids: ['first'] }, fails: /mission|person token/i },
-  mission_denied: { propose: 'deny', fails: /access_denied/ },
+  mission_denied: { propose: 'deny', fails: /\bdenied\b/ },
+  self_approval: { propose: 'self', fails: /\bdenied\b/ },
   review_allow: { call: { ids: ['last'], reason: 'To greet Alice by her full name.' }, bob: ['item:last', 'approve'], pass: r => r.shared.last },
-  review_deny: { call: { ids: ['linkedin'] }, bob: ['item:linkedin', 'deny'], fails: /declined|access_denied|refused/i },
+  review_deny: { call: { ids: ['linkedin'] }, bob: ['item:linkedin', 'deny'], fails: /declined/ },
+  remembered_deny: { call: { ids: ['sessions'] }, bob: ['item:sessions', 'deny'], repeat: true, fails: /supervisor refused item:sessions/ },
 }
 
 async function runCase(name, approved) {
   const c = CASES[name]
   if (c.propose) {
     try {
-      await requestMission(`${DEFAULT_MISSION} (${name})`, { onInteraction: (url, code) => bob(url, code, c.propose) })
+      await requestMission(`${DEFAULT_MISSION} (${name})`, {
+        onInteraction: (url, code) => (c.propose === 'self' ? selfApprove(url, code) : bob(url, code, c.propose)),
+      })
       console.log(`✗ ${name}: the mission was approved`)
       return false
     } catch (err) {
@@ -129,10 +136,12 @@ async function runCase(name, approved) {
   try {
     await client.connect(transport)
     const schema = JSON.parse((await client.callTool({ name: 'get_context_schema', arguments: {} })).content[0].text)
+    // A repeat asks once with Bob answering, then again, which the supervisor answers from the log.
+    if (c.repeat) await Promise.all([client.callTool({ name: 'search_context', arguments: c.call }).catch(() => {}), bobReview(s256, ...c.bob)])
     const [answer, said, bobSaid] = await Promise.all([
       client.callTool({ name: 'search_context', arguments: c.call }),
       c.alice ? alice(s256, ...c.alice) : undefined,
-      c.bob ? bobReview(s256, ...c.bob, c.call.reason) : undefined,
+      c.bob && !c.repeat ? bobReview(s256, ...c.bob, c.call.reason) : undefined,
     ])
     if (answer.isError) throw new Error(answer.content?.[0]?.text ?? 'tool error')
     const result = JSON.parse(answer.content[0].text)

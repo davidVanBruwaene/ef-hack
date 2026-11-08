@@ -12,7 +12,7 @@ const m = await requestMission(description, {
     console.log(await QRCode.toString(link, { type: 'terminal', small: true }))
     const port = LOOPBACK[new URL(url).hostname]
     const local = port ? `\nOn this machine: http://127.0.0.1:${port}/interact?code=${encodeURIComponent(code)}` : ''
-    console.log(`Bob: scan the code, or open ${link}${local}\n(code ${code}). Waiting for your answer…`)
+    console.log(`Bob: scan the code with a phone signed in through npm run pair, or open ${link}${local}\n(code ${code}). Waiting for your answer…`)
   },
 }).catch(err => { console.error(`✗ ${err.message}`); process.exit(1) })
 
