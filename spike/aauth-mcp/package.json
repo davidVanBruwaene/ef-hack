@@ -15,7 +15,9 @@
     "check:consent": "node consent-check.mjs",
     "check:missions": "node mission-check.mjs",
     "mcp-config": "node write-mcp-config.mjs",
-    "pair": "node pair.mjs"
+    "pair": "node pair.mjs",
+    "console": "node agent-console.mjs",
+    "console:link": "node agent-console.mjs link"
   },
   "dependencies": {
     "@aauth/agent": "4.1.1",

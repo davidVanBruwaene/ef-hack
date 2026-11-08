@@ -13,6 +13,7 @@ const m = await requestMission(description, {
     const port = LOOPBACK[new URL(url).hostname]
     const local = port ? `\nOn this machine: http://127.0.0.1:${port}/interact?code=${encodeURIComponent(code)}` : ''
     console.log(`Bob: scan the code with a phone signed in through npm run pair, or open ${link}${local}\n(code ${code}). Waiting for your answer…`)
+    if (process.env.RP_ID) console.log(`Or answer in the console, once npm run console:link has joined your account: https://${process.env.RP_ID.trim()}/`)
   },
 }).catch(err => { console.error(`✗ ${err.message}`); process.exit(1) })
 

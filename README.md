@@ -37,6 +37,8 @@ npm run dev        # http://localhost:5173, mock data
 
 Set `VITE_API=live` (and `VITE_API_TARGET` for the server's URL) to use the real console API instead of the mock.
 
+Behind the tunnel, Alice and Bob use the same console. Build it with `VITE_API=live npm run build` in `console/`, then run `npm run console` in `spike/aauth-mcp` (port 4531). It serves the build to signed-in store members and adds Bob's own agent's missions and held requests. `npm run console:link bob` joins Bob's store account to his person server. [spike/aauth-mcp/two-laptops.md](spike/aauth-mcp/two-laptops.md) covers both.
+
 On two laptops, run `npm run bob` on one and `npm run alice` on the other, behind a Cloudflare Tunnel. The spike README covers the setup.
 
 Keep this section current: anyone should be able to run main from a fresh clone.

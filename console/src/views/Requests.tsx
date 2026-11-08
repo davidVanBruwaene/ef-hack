@@ -12,6 +12,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { initials, plural } from '@/lib/format'
+import { AgentRequestCard, useAgentRequests } from '@/views/AgentRequests'
 
 interface Props {
   state: State
@@ -21,7 +22,12 @@ interface Props {
 }
 
 export function Requests({ state, groups, refresh, focus }: Props) {
+  const agent = useAgentRequests()
   const group = groups.find((g) => g.key === focus) ?? groups[0]
+  const own = agent.pending[0]
+
+  // Your own agent's requests come first, unless you picked someone else's from the bell.
+  if (own && !groups.some((g) => g.key === focus)) return <AgentRequestCard key={own.id} request={own} refresh={agent.refresh} />
 
   if (!group) {
     return (
