@@ -17,6 +17,16 @@ npm run pair       # once: a QR code signs Bob's phone in to his person server
 npm run mission    # before using it from Claude Code: Bob approves the mission from a QR code
 ```
 
+The owner console (React + Vite, mock data until the API exists) lives in `console/`:
+
+```bash
+cd console
+npm ci
+npm run dev        # http://localhost:5173, mock data
+```
+
+Set `VITE_API=live` (and `VITE_API_TARGET` for the server's URL) to use the real console API instead of the mock.
+
 On two laptops, run `npm run bob` on one and `npm run alice` on the other, behind a Cloudflare Tunnel. The spike README covers the setup.
 
 Keep this section current: anyone should be able to run main from a fresh clone.
