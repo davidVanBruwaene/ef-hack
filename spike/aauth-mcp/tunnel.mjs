@@ -71,14 +71,15 @@ function config(sideName, flags) {
   if (out === DEFAULT_CONFIG) fail(`--out must not be ${DEFAULT_CONFIG}: it is cloudflared's default and names another tunnel. Write a parley file, such as ~/.cloudflared/parley-${sideName}.yml.`)
   checkDistinct()
   const { tunnel, credentials } = tunnelOf(flags, side)
-  const routes = side.servers.map(s => ({ host: publicHost(s), port: s.port }))
-  if (flags.console) routes.push({ host: consoleHost(), port: Number(flags.console) })
+  const routes = side.servers.map(s => ({ host: publicHost(s), origin: `http://127.0.0.1:${s.port}` }))
+  // Vite listens on [::1] only on macOS; for localhost, cloudflared tries both address families.
+  if (flags.console) routes.push({ host: consoleHost(), origin: `http://localhost:${flags.console}` })
   const yaml = [
     `# ${side.label} side, written by spike/aauth-mcp/tunnel.mjs from .env and the local ports. Rerun it after changing either.`,
     `tunnel: ${JSON.stringify(tunnel)}`,
     ...(credentials ? [`credentials-file: ${JSON.stringify(credentials)}`] : []),
     'ingress:',
-    ...routes.flatMap(r => [`  - hostname: ${r.host}`, `    service: http://127.0.0.1:${r.port}`]),
+    ...routes.flatMap(r => [`  - hostname: ${r.host}`, `    service: ${r.origin}`]),
     '  - service: http_status:404',
     '',
   ].join('\n')

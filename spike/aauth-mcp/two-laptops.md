@@ -9,7 +9,7 @@ Bob's laptop runs `npm run bob`, which starts Bob's person server and agent prov
 | `parley-bob.puddlecloud.com` | parley-bob | 4401 | Bob's person server and approval page (`AAUTH_PS`) |
 | `parley-agent.puddlecloud.com` | parley-bob | 4403 | Bob's agent provider (`AAUTH_AGENT`) |
 | `parley-alice.puddlecloud.com` | parley-alice | 4402 | Alice's MCP server and `/api` (`AAUTH_RESOURCE`) |
-| `parley-console.puddlecloud.com` | parley-alice | Julián's choice | Alice's console and the passkey store (`RP_ID`) |
+| `parley-console.puddlecloud.com` | parley-alice | 5173, from `npm run dev` in `console/` | Alice's console and the passkey store (`RP_ID`) |
 
 The tunnels and DNS records already exist in David's Cloudflare account. Every hostname is one level under the zone, because Cloudflare's Universal SSL certificate covers only that level. A deeper name such as `bob.parley.puddlecloud.com` would fail TLS.
 
@@ -36,18 +36,18 @@ The tunnels and DNS records already exist in David's Cloudflare account. Every h
    node tunnel.mjs config bob --credentials ~/.cloudflared/5d32c91e-d00f-4ac7-af35-44c56fadb0e8.json --out ~/.cloudflared/parley-bob.yml
    cloudflared tunnel --config ~/.cloudflared/parley-bob.yml ingress validate
    # Alice's laptop
-   node tunnel.mjs config alice --credentials ~/.cloudflared/5356e70a-87a0-45c9-a315-5cd7bda96241.json --console <console port> --out ~/.cloudflared/parley-alice.yml
+   node tunnel.mjs config alice --credentials ~/.cloudflared/5356e70a-87a0-45c9-a315-5cd7bda96241.json --console 5173 --out ~/.cloudflared/parley-alice.yml
    cloudflared tunnel --config ~/.cloudflared/parley-alice.yml ingress validate
    ```
 
-   The script takes the tunnel id from the credentials file and never prints the secret. mockin's port is never exposed. If the output file exists with other contents, the script stops unless you add `--force`, and it never writes `~/.cloudflared/config.yml`. The ports come from `config.mjs`, which reads `AAUTH_PS_PORT`, `AAUTH_AGENT_PORT` and `AAUTH_RESOURCE_PORT` from `.env`. Rerun it whenever `.env` or the ports change.
+   The script takes the tunnel id from the credentials file and never prints the secret. mockin's port is never exposed. If the output file exists with other contents, the script stops unless you add `--force`, and it never writes `~/.cloudflared/config.yml`. The ports come from `config.mjs`, which reads `AAUTH_PS_PORT`, `AAUTH_AGENT_PORT` and `AAUTH_RESOURCE_PORT` from `.env`. Rerun it whenever `.env` or the ports change. The console's route says `localhost` rather than 127.0.0.1, because Vite listens on `[::1]` only on macOS.
 5. **Keys.** Leave `.keys/` alone. Each side generates its own keys on first start and publishes the public halves, so nothing is copied between the laptops.
 
 ## Each run
 
 | Bob's laptop | Alice's laptop |
 |---|---|
-| `npm run bob` | `npm run alice`, and the console on its port |
+| `npm run bob` | `npm run alice`, and `npm run dev` in `console/` |
 | `cloudflared tunnel --config ~/.cloudflared/parley-bob.yml run` | `cloudflared tunnel --config ~/.cloudflared/parley-alice.yml run` |
 | `node tunnel.mjs check` | `node tunnel.mjs check` |
 
@@ -72,7 +72,8 @@ Some `npm run check` cases answer as Alice through her `/api`. On Bob's laptop t
 | `check` says ENOTFOUND everywhere | No DNS record | `cloudflared tunnel --config <that side's file> route dns <tunnel> <host>` |
 | ERR_TLS_CERT_ALTNAME_INVALID | The hostname is two levels under the zone | Use a first-level hostname |
 | 530 | No tunnel is connected for that hostname | Start cloudflared on that side and read its log |
-| 502 | The tunnel is up, but nothing answers on the port | Start that side's server. The servers listen on 127.0.0.1 only, which is why the config says 127.0.0.1 rather than localhost |
+| 502 | The tunnel is up, but nothing answers on the port | Start that side's server. The AAuth servers listen on 127.0.0.1 only, which is why their routes say 127.0.0.1 rather than localhost |
+| 403 "Blocked request. This host is not allowed" from parley-console | Vite refuses any hostname that `server.allowedHosts` in `console/vite.config.ts` does not name | Add `parley-console.puddlecloud.com` to `server.allowedHosts` |
 | 404 | The ingress has no rule for the hostname, or DNS points it at the other tunnel | Rerun `tunnel.mjs config`, restart cloudflared, and check `route dns` |
 | Wrong issuer | The server started with other `AAUTH_*` values, for example without `.env` | Fix `.env` and restart the server |
 | cloudflared cannot connect | The network blocks port 7844, which cloudflared uses to reach Cloudflare (QUIC, then HTTP/2) | Try `--protocol http2`, or tether to a phone |
