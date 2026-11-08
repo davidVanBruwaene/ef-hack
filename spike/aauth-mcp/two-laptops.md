@@ -28,19 +28,19 @@ The tunnels and DNS records already exist in David's Cloudflare account. Every h
    RP_ORIGINS=https://parley-console.puddlecloud.com
    ```
 
-3. **Credentials.** A laptop needs the credentials file of the tunnel it runs, `<tunnel id>.json`. David's laptop holds both in `~/.cloudflared`, and `cloudflared tunnel list` shows which id belongs to which tunnel. David hands the second laptop its file in person, never through git or notes.
+3. **Credentials.** A laptop needs the credentials file of the tunnel it runs, `~/.cloudflared/<tunnel id>.json`. parley-bob is `5d32c91e-d00f-4ac7-af35-44c56fadb0e8` and parley-alice is `5356e70a-87a0-45c9-a315-5cd7bda96241`. David's laptop holds both files. David hands the second laptop its file in person, never through git or notes, and it goes in the same place there.
 4. **Tunnel config.** Each side writes its config from `.env` and the local ports:
 
    ```bash
    # Bob's laptop
-   node tunnel.mjs config bob --credentials ~/.cloudflared/<parley-bob id>.json --out ~/.cloudflared/parley-bob.yml
+   node tunnel.mjs config bob --credentials ~/.cloudflared/5d32c91e-d00f-4ac7-af35-44c56fadb0e8.json --out ~/.cloudflared/parley-bob.yml
    cloudflared tunnel --config ~/.cloudflared/parley-bob.yml ingress validate
    # Alice's laptop
-   node tunnel.mjs config alice --credentials <parley-alice .json> --console <console port> --out ~/.cloudflared/parley-alice.yml
+   node tunnel.mjs config alice --credentials ~/.cloudflared/5356e70a-87a0-45c9-a315-5cd7bda96241.json --console <console port> --out ~/.cloudflared/parley-alice.yml
    cloudflared tunnel --config ~/.cloudflared/parley-alice.yml ingress validate
    ```
 
-   The script takes the tunnel id from the credentials file and never prints the secret. mockin's port is never exposed. If the output file exists with other contents, the script stops unless you add `--force`. Rerun it whenever `.env` or the ports change.
+   The script takes the tunnel id from the credentials file and never prints the secret. mockin's port is never exposed. If the output file exists with other contents, the script stops unless you add `--force`, and it never writes `~/.cloudflared/config.yml`. The ports come from `config.mjs`, which reads `AAUTH_PS_PORT`, `AAUTH_AGENT_PORT` and `AAUTH_RESOURCE_PORT` from `.env`. Rerun it whenever `.env` or the ports change.
 5. **Keys.** Leave `.keys/` alone. Each side generates its own keys on first start and publishes the public halves, so nothing is copied between the laptops.
 
 ## Each run
@@ -54,10 +54,13 @@ The tunnels and DNS records already exist in David's Cloudflare account. Every h
 `tunnel.mjs check` fetches each server's metadata at its public URL and confirms that the `issuer` it reports matches `.env`. It also confirms that the console answers. When it passes on both laptops, DNS, TLS, both tunnels and every server line up. Then, on Bob's laptop:
 
 ```bash
-npm run mission          # QR code: Bob approves the mission on a phone
-node mission-check.mjs   # Bob's person server and supervisor against -11, through both tunnels
+npm run pair             # once: signs Bob's phone in to Bob's person server
+npm run mission          # QR code: Bob approves the mission on that phone
+npm run check:missions   # Bob's person server and supervisor against -11, through both tunnels
 npm run mcp-config       # then Claude Code, as in the README
 ```
+
+`check:missions` answers for Bob with Bob's console token and approves its missions rules-only. `JEV_LIVE=1 npm run check:missions` also runs the two cases Jev decides, which spends a few OpenRouter calls.
 
 Some `npm run check` cases answer as Alice through her `/api`. On Bob's laptop that needs `ALICE_CONSOLE_TOKEN` set to Alice's token. Without it, the script generates a token of its own, which Alice's server refuses. The token is a secret, so hand it over in person.
 

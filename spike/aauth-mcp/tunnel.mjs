@@ -1,7 +1,7 @@
 // Named Cloudflare tunnels for two laptops: writes one side's cloudflared config from .env, or checks the public hostnames. See two-laptops.md.
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { AGENT, PORTS, PS, RESOURCE } from './config.mjs'
 
 const USAGE = `usage: node tunnel.mjs config bob|alice [--credentials <tunnel .json>] [--tunnel <name or id>] [--console <port>] [--out <file> [--force]]
@@ -23,6 +23,8 @@ const DEFAULT_CONFIG = join(homedir(), '.cloudflared', 'config.yml')
 const CONSOLE_HOST = process.env.RP_ID?.trim()
 
 const fail = msg => { console.error(`✗ ${msg}`); process.exit(1) }
+// A quoted ~ reaches node unexpanded.
+const expand = p => resolve(p.replace(/^~(?=$|\/)/, homedir()))
 
 // §11.1.1: https, lowercase, scheme and host only.
 function publicHost({ id, what }) {
@@ -53,7 +55,7 @@ function tunnelOf(flags, side) {
     const tunnel = flags.tunnel ?? side.tunnel
     return { tunnel, credentials: UUID.test(tunnel) ? join(homedir(), '.cloudflared', `${tunnel}.json`) : undefined }
   }
-  const credentials = resolve(flags.credentials)
+  const credentials = expand(flags.credentials)
   let raw, id
   try { raw = readFileSync(credentials, 'utf8') } catch (err) { fail(`cannot read ${credentials}: ${err.code}`) }
   try { id = JSON.parse(raw).TunnelID } catch { fail(`${credentials} is not a cloudflared credentials file`) }
@@ -65,6 +67,8 @@ function config(sideName, flags) {
   const side = SIDES[sideName] ?? fail(`the side is bob or alice, not "${sideName ?? ''}"\n${USAGE}`)
   if (flags.console && sideName !== 'alice') fail("--console belongs on Alice's side, which serves the console")
   if (flags.console && !/^\d+$/.test(flags.console)) fail(`--console takes the console's local port, not "${flags.console}"`)
+  const out = flags.out && expand(flags.out)
+  if (out === DEFAULT_CONFIG) fail(`--out must not be ${DEFAULT_CONFIG}: it is cloudflared's default and names another tunnel. Write a parley file, such as ~/.cloudflared/parley-${sideName}.yml.`)
   checkDistinct()
   const { tunnel, credentials } = tunnelOf(flags, side)
   const routes = side.servers.map(s => ({ host: publicHost(s), port: s.port }))
@@ -80,12 +84,12 @@ function config(sideName, flags) {
   ].join('\n')
 
   let note = ''
-  if (!flags.out) process.stdout.write(yaml)
-  else if (!existsSync(flags.out) || flags.force) { writeFileSync(flags.out, yaml); note = `wrote ${flags.out}` }
-  else if (readFileSync(flags.out, 'utf8') === yaml) note = `${flags.out} is already up to date`
-  else fail(`${flags.out} exists with other contents. Look at it, then add --force to replace it.`)
+  if (!out) process.stdout.write(yaml)
+  else if (!existsSync(out) || flags.force) { mkdirSync(dirname(out), { recursive: true }); writeFileSync(out, yaml); note = `wrote ${out}` }
+  else if (readFileSync(out, 'utf8') === yaml) note = `${out} is already up to date`
+  else fail(`${out} exists with other contents. Look at it, then add --force to replace it.`)
 
-  const file = flags.out ?? '<this config>'
+  const file = out ?? '<this config>'
   console.error([
     note,
     credentials ? '' : `No credentials-file: cloudflared then finds "${tunnel}" by name, which needs cert.pem from cloudflared tunnel login. On another laptop pass --credentials <the tunnel's .json>.`,
