@@ -44,6 +44,14 @@
 <h2>Recovery</h2>
 <div class="row"><input id="code" placeholder="abcde-fghjk"><button id="recover">Sign in with a recovery code</button></div>
 
+<h2>Invitations (signed in)</h2>
+<div class="row"><input id="evname" placeholder="Event name"><button id="mkevent">Event QR (many people)</button><button id="mkpersonal">Personal QR (one person)</button></div>
+<div id="invbox" hidden style="text-align:center">
+  <img id="invimg" alt="Invitation QR code" width="240" height="240">
+  <p class="hint"><a id="invlink" href="#" target="_blank" rel="noopener">Open the link</a></p>
+</div>
+<div class="row"><button id="items">My items</button><button id="search">Search the network</button><input id="q" placeholder="name or item"></div>
+
 <h2>Output</h2>
 <pre id="out" aria-live="polite">Ready.</pre>
 
@@ -57,6 +65,15 @@ async function j(method, path, body) {
 async function run(label, fn) {
   try { show(label, await fn()) } catch (e) { show(label + ' failed', { name: e.name, message: e.message }) }
 }
+async function mkInvite(body) {
+  const r = await j('POST', '/me/invites', body)
+  if (r.status === 200) { $('invimg').src = r.body.qr; $('invlink').href = r.body.url; $('invbox').hidden = false }
+  show('invite', r)
+}
+$('mkevent').onclick = () => mkInvite({ kind: 'event', name: $('evname').value, hours: 6 })
+$('mkpersonal').onclick = () => mkInvite({ kind: 'personal' })
+$('items').onclick = () => run('my items', () => j('GET', '/me/items'))
+$('search').onclick = () => run('search', () => j('GET', '/network/search?q=' + encodeURIComponent($('q').value)))
 $('me').onclick = () => run('session', () => j('GET', '/auth/me'))
 $('logout').onclick = () => run('sign out', () => j('POST', '/auth/logout', {}))
 $('list').onclick = () => run('passkeys', () => j('GET', '/auth/credentials'))

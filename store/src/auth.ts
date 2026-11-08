@@ -17,6 +17,9 @@ import type {
   VerifiedRegistrationResponse,
 } from '@simplewebauthn/server'
 import { sha256, newRecoveryCodes, normalizeCode } from './db.ts'
+import { applyInvite, inviteByToken, inviteUsable, seedItems } from './people.ts'
+import type { InviteRow } from './people.ts'
+import { originGuard } from './guard.ts'
 import type { CredentialRow, RecoveryCodeRow, SessionRow, UserRow } from './db.ts'
 import type { Config } from './config.ts'
 
@@ -60,7 +63,7 @@ type Ctx = Context<Env>
 const one = <T>(s: StatementSync) => (...p: SQLInputValue[]) => s.get(...p) as T | undefined
 const all = <T>(s: StatementSync) => (...p: SQLInputValue[]) => s.all(...p) as unknown as T[]
 
-export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
+export function createAuth(db: DatabaseSync, config: Config): { app: Hono<Env>; userFor: (c: Context) => UserRow | null } {
   const app = new Hono<Env>()
   const secure = config.origins.every((o) => o.startsWith('https://'))
   const challenges = new Map<string, Challenge>()
@@ -165,6 +168,14 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
     return p && p.status === 'joined' && p.joinHash && sameSecret(sha256(c.req.query('jt') ?? ''), p.joinHash) ? { id, p } : 'bad'
   }
 
+  // ?invite=<token> on a verify call: the scanner of a QR invite is joining or connecting.
+  function inviteForVerify(c: Ctx): { inv: InviteRow } | null | 'bad' {
+    const token = c.req.query('invite')
+    if (!token) return null
+    const inv = inviteByToken(db, token)
+    return inviteUsable(inv) ? { inv } : 'bad'
+  }
+
   const publicUser = (u: UserRow) => ({
     id: u.id,
     display_name: u.display_name,
@@ -172,14 +183,7 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
     last_name: u.last_name,
   })
 
-  // CSRF: every state-changing call must come from one of our own origins.
-  app.use('*', async (c, next) => {
-    if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
-      const origin = c.req.header('origin')
-      if (!origin || !config.origins.includes(origin)) return c.json({ error: 'bad_origin' }, 403)
-    }
-    await next()
-  })
+  app.use('*', originGuard(config))
 
   app.get('/auth/me', (c) => {
     const s = currentSession(c)
@@ -214,6 +218,8 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
   app.post('/auth/register/verify', async (c) => {
     const pair = pairingForVerify(c)
     if (pair === 'bad') return c.json({ error: 'pair_not_ready' }, 403)
+    const invite = inviteForVerify(c)
+    if (invite === 'bad') return c.json({ error: 'invite_invalid' }, 410)
     const e = takeChallenge(c, 'register')
     if (!e?.pending) return c.json({ error: 'challenge_expired' }, 400)
     const body = (await c.req.json().catch(() => null)) as RegistrationResponseJSON | null
@@ -234,6 +240,8 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
     const { userId, first, last } = e.pending
     q.insUser.run(userId, `${first} ${last}`, first, last, Date.now())
     storeCredential(userId, result.registrationInfo, 'First passkey')
+    seedItems(db, userId, first, last)
+    if (invite) applyInvite(db, invite.inv, userId)
     const codes = issueRecoveryCodes(userId)
     startSession(c, userId, 'passkey')
     if (pair) Object.assign(pair.p, { status: 'approved', userId })
@@ -251,6 +259,8 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
   app.post('/auth/login/verify', async (c) => {
     const pair = pairingForVerify(c)
     if (pair === 'bad') return c.json({ error: 'pair_not_ready' }, 403)
+    const invite = inviteForVerify(c)
+    if (invite === 'bad') return c.json({ error: 'invite_invalid' }, 410)
     const e = takeChallenge(c, 'login')
     if (!e) return c.json({ error: 'challenge_expired' }, 400)
     const body = (await c.req.json().catch(() => null)) as AuthenticationResponseJSON | null
@@ -280,6 +290,7 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
     if (!verified) return c.json({ error: 'verification_failed' }, 401)
     q.bump.run(newCounter, Date.now(), row.id)
     startSession(c, row.user_id, 'passkey')
+    if (invite) applyInvite(db, invite.inv, row.user_id)
     if (pair) Object.assign(pair.p, { status: 'approved', userId: row.user_id })
     return c.json({ user: publicUser(q.userById(row.user_id)!) })
   })
@@ -425,5 +436,5 @@ export function createAuth(db: DatabaseSync, config: Config): Hono<Env> {
     return c.json({ recovery_codes: issueRecoveryCodes(user.id) })
   })
 
-  return app
+  return { app, userFor: (c) => currentSession(c as Ctx)?.user ?? null }
 }

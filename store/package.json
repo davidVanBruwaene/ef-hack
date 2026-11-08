@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test test/flow.test.ts",
+    "test": "node --test test/flow.test.ts test/network.test.ts",
     "start": "node src/server.ts",
     "typecheck": "tsc"
   },
