@@ -15,6 +15,7 @@ npm run world      # leave it running
 npm run check      # in a second terminal
 npm run pair       # once: a QR code signs Bob's phone in to his person server
 npm run mission    # before using it from Claude Code: Bob approves the mission from a QR code
+npm run check:network  # the people network against a throwaway store; needs npm ci in store/ first
 ```
 
 The passkey store (accounts and sign-in; Node 22.18 or later) lives in `store/`:
