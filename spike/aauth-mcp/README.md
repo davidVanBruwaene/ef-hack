@@ -148,7 +148,7 @@ With `STORE_URL` set, `alice.mjs` serves every member of the passkey store (`sto
 In this mode Alice's `/api` acts for one owner at a time:
 - A member signed in to the store sends the store's `sid` cookie, and the MCP server asks the store's `/auth/me` whose session it is. The cookie is host-only, so the console must reach `/api` through the store's origin. A post with a cookie must have a JSON body, or it gets `415`.
 - The console token with `x-owner: <member id>`, or `?owner=`, acts for that member. With neither, it acts for every owner.
-- `GET /api/state` returns that owner's `{requesters, asks, disclosures}`, plus `me` for a cookie. Asks and disclosures carry `owner`.
+- `GET /api/state` returns that owner's `{requesters, asks, disclosures}`, plus `me` for a cookie, and every owner's for the token alone. Asks and disclosures carry `owner`, and an ask's `item_id` is `<member id>/<item id>`. There is no `owner` or `items`: items come from the store's `/me/items`.
 - Revoking a requester refuses it for this owner's items only, and leaves this owner out of its `find_people`.
 - `/api/items` answers `409`: items live in the store.
 

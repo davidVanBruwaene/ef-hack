@@ -270,13 +270,15 @@ const CASES = {
     const none = await fetch(`${ALICE_API}/state`)
     const bogus = await ownerApi({ cookie: () => 'sid=not-a-session' }, '/state')
     const items = await ownerApi({}, '/items', { label: 'Site', url: SITE })
+    const admin = (await ownerApi({}, '/state')).json
+    check(!('items' in admin) && !('owner' in admin) && admin.asks.some(a => a.owner === carol.id) && admin.asks.some(a => a.owner === alice.id), `the console token alone saw ${Object.keys(admin)}`)
     const form = await fetch(`${ALICE_API}/asks/any`, {
       method: 'POST', headers: { cookie: alice.cookie(), 'content-type': 'text/plain' }, body: '{"decision":"approve"}',
     })
     check(none.status === 401 && bogus.status === 401, `no credentials got ${none.status}, a bad session ${bogus.status}`)
     check(items.status === 409, `adding an item at /api got ${items.status}`)
     check(form.status === 415, `a cookie post without a JSON body got ${form.status}`)
-    return 'no or bad session 401, /api/items 409, cookie form post 415'
+    return "no or bad session 401; the token alone sees every owner's asks and no alice.json items; /api/items 409; cookie form post 415"
   },
 
   async revoked() {

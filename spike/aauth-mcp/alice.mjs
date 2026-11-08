@@ -281,7 +281,12 @@ async function consoleApi(req, res, url, token) {
   if (!caller.ok) return reply(401, { error: 'unauthorized' })
   const { owner } = caller
   const who = caller.user?.first_name ?? (owner ? short(owner) : first)
-  if (req.method === 'GET' && url.pathname === '/api/state') return reply(200, { ...state.view(owner), ...(caller.user ? { me: caller.user } : {}) })
+  if (req.method === 'GET' && url.pathname === '/api/state') {
+    const view = state.view(owner)
+    // On the network, alice.json's owner and items are not what this server serves.
+    if (people) { delete view.owner; delete view.items }
+    return reply(200, { ...view, ...(caller.user ? { me: caller.user } : {}) })
+  }
   if (req.method !== 'POST') return reply(404, { error: 'not_found' })
   // A cookie also rides on cross-site form posts; a cross-origin JSON post needs a preflight, and the preflight grants no credentials.
   if (caller.user && !/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return reply(415, { error: 'json_required' })
