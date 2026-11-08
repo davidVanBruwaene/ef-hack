@@ -40,7 +40,7 @@ The tunnels and DNS records already exist in David's Cloudflare account. Every h
    cloudflared tunnel --config ~/.cloudflared/parley-alice.yml ingress validate
    ```
 
-   The script takes the tunnel id from the credentials file and never prints the secret. mockin's port is never exposed. If the output file exists with other contents, the script stops unless you add `--force`, and it never writes `~/.cloudflared/config.yml`. The ports come from `config.mjs`, which reads `AAUTH_PS_PORT`, `AAUTH_AGENT_PORT` and `AAUTH_RESOURCE_PORT` from `.env`. Rerun it whenever `.env` or the ports change. The console's route says `localhost` rather than 127.0.0.1, because Vite listens on `[::1]` only on macOS. With `--store`, the console server answers `/`, `/assets/`, `/api/` and `/agent/`, and the store answers every other path on the hostname, so the console sees the store's sign-in cookie.
+   The script takes the tunnel id from the credentials file and never prints the secret. mockin's port is never exposed. If the output file exists with other contents, the script stops unless you add `--force`, and it never writes `~/.cloudflared/config.yml`. The ports come from `config.mjs`, which reads `AAUTH_PS_PORT`, `AAUTH_AGENT_PORT` and `AAUTH_RESOURCE_PORT` from `.env`. Rerun it whenever `.env` or the ports change. The console's route says `localhost` rather than 127.0.0.1, because Vite listens on `[::1]` only on macOS. With `--store`, Alice's server answers `/api/`, the console server answers `/`, `/assets/` and `/agent/`, and the store answers every other path on the hostname, so all three see the store's sign-in cookie.
 5. **Keys.** Leave `.keys/` alone. Each side generates its own keys on first start and publishes the public halves, so nothing is copied between the laptops.
 
 ## Each run
@@ -60,7 +60,7 @@ npm run check:missions   # Bob's person server and supervisor against -11, throu
 npm run mcp-config       # then Claude Code, as in the README
 ```
 
-Bob answers his agent in the same console as Alice. Once, he signs in at `https://parley-console.puddlecloud.com/dev` on his phone, then scans the QR code that `npm run console:link bob` shows on Alice's laptop. The console then shows his agent's missions and the requests his supervisor holds, beside anything asked of him. `npm run console` reads Bob's person server with his console token, so Alice's laptop needs `BOB_CONSOLE_TOKEN` set to it, handed over in person.
+Bob answers his agent in the same console as Alice: he signs in at `https://parley-console.puddlecloud.com/` with his store passkey. `MEMBER_MAP` names his member id for his person server, as `{"https://parley-bob.puddlecloud.com": "<member id>"}`, and `npm run console` reads it with `STORE_URL` as Alice's server does. The console then shows his agent's missions and the requests his supervisor holds, beside anything asked of him. `npm run console` reads Bob's person server with his console token, so Alice's laptop needs `BOB_CONSOLE_TOKEN` set to it, handed over in person.
 
 `check:missions` answers for Bob with Bob's console token and approves its missions rules-only. `JEV_LIVE=1 npm run check:missions` also runs the two cases Jev decides, which spends a few OpenRouter calls.
 

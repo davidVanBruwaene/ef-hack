@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 
 // MEMBER_MAP is inline JSON, or the path of a JSON file read on every lookup so setup can change it while the server runs.
-function memberMap(value) {
+export function memberMap(value) {
   const v = (value ?? '').trim()
   if (!v) return () => ({})
   if (v.startsWith('{')) {

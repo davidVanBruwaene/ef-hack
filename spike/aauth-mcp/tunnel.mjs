@@ -21,8 +21,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DEFAULT_CONFIG = join(homedir(), '.cloudflared', 'config.yml')
 // The console is not an AAuth server; its hostname is the passkey RP_ID that the store reads.
 const CONSOLE_HOST = process.env.RP_ID?.trim()
-// With --store, agent-console.mjs answers these paths and the store answers the rest, so both share the store's sid cookie.
-const CONSOLE_PATHS = '^/($|assets/|api/|agent/)'
+// With --store, Alice's server answers /api/, agent-console.mjs these paths and the store the rest, so all three see the store's sid cookie.
+const CONSOLE_PATHS = '^/($|assets/|agent/)'
 
 const fail = msg => { console.error(`✗ ${msg}`); process.exit(1) }
 // A quoted ~ reaches node unexpanded.
@@ -77,6 +77,7 @@ function config(sideName, flags) {
   const { tunnel, credentials } = tunnelOf(flags, side)
   const routes = side.servers.map(s => ({ host: publicHost(s), origin: `http://127.0.0.1:${s.port}` }))
   // Vite listens on [::1] only on macOS; for localhost, cloudflared tries both address families.
+  if (flags.store) routes.push({ host: consoleHost(), path: '^/api/', origin: `http://127.0.0.1:${PORTS.resource}` })
   if (flags.console) routes.push({ host: consoleHost(), ...(flags.store ? { path: CONSOLE_PATHS } : {}), origin: `http://localhost:${flags.console}` })
   if (flags.store) routes.push({ host: consoleHost(), origin: `http://localhost:${flags.store}` })
   const yaml = [
