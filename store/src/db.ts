@@ -1,0 +1,131 @@
+import { DatabaseSync } from 'node:sqlite'
+import { createHash, randomBytes } from 'node:crypto'
+
+export interface UserRow {
+  id: string
+  display_name: string
+  first_name: string
+  last_name: string
+  created_at: number
+}
+
+export interface CredentialRow {
+  id: string
+  user_id: string
+  public_key: Uint8Array
+  counter: number
+  transports: string
+  device_type: string
+  backed_up: number
+  label: string
+  created_at: number
+  last_used_at: number | null
+}
+
+export interface SessionRow {
+  token_hash: string
+  user_id: string
+  via: 'passkey' | 'recovery'
+  expires_at: number
+}
+
+export interface RecoveryCodeRow {
+  code_hash: string
+  user_id: string
+  used_at: number | null
+}
+
+export const sha256 = (s: string): string => createHash('sha256').update(s).digest('base64url')
+
+export function openDb(path: string): DatabaseSync {
+  const db = new DatabaseSync(path)
+  db.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS credentials (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      public_key BLOB NOT NULL,
+      counter INTEGER NOT NULL,
+      transports TEXT NOT NULL,
+      device_type TEXT NOT NULL,
+      backed_up INTEGER NOT NULL,
+      label TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      via TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+    -- What a person shares. rule is the network-wide rule; person_rules override it for one person.
+    CREATE TABLE IF NOT EXISTS items (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      value TEXT NOT NULL,
+      rule TEXT NOT NULL CHECK (rule IN ('everyone','ask','only_me')),
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, id)
+    );
+    CREATE TABLE IF NOT EXISTS person_rules (
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      person_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      item_id TEXT NOT NULL,
+      rule TEXT NOT NULL CHECK (rule IN ('everyone','ask','only_me')),
+      PRIMARY KEY (owner_id, person_id, item_id)
+    );
+    CREATE TABLE IF NOT EXISTS connections (
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      person_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      via_invite TEXT,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (owner_id, person_id)
+    );
+    CREATE TABLE IF NOT EXISTS invites (
+      id TEXT PRIMARY KEY,
+      token TEXT UNIQUE NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('personal','event')),
+      creator_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      grants TEXT NOT NULL,
+      max_uses INTEGER,
+      uses INTEGER NOT NULL DEFAULT 0,
+      expires_at INTEGER NOT NULL,
+      revoked INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS invite_uses (
+      invite_id TEXT NOT NULL REFERENCES invites(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      at INTEGER NOT NULL,
+      PRIMARY KEY (invite_id, user_id)
+    );
+    CREATE TABLE IF NOT EXISTS recovery_codes (
+      code_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      used_at INTEGER
+    );
+  `)
+  return db
+}
+
+const ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz' // Crockford base32, no i l o u
+
+export function newRecoveryCodes(n = 8): string[] {
+  return Array.from({ length: n }, () => {
+    const bytes = randomBytes(10)
+    const s = Array.from(bytes, (b) => ALPHABET[b % 32]).join('')
+    return `${s.slice(0, 5)}-${s.slice(5)}` // 50 bits each
+  })
+}
+
+export const normalizeCode = (c: unknown): string => String(c).toLowerCase().replace(/[^0-9a-z]/g, '')

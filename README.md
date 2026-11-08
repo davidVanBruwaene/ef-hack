@@ -17,6 +17,16 @@ npm run pair       # once: a QR code signs Bob's phone in to his person server
 npm run mission    # before using it from Claude Code: Bob approves the mission from a QR code
 ```
 
+The passkey store (accounts and sign-in; Node 22.18 or later) lives in `store/`:
+
+```bash
+cd store
+npm ci
+npm run typecheck  # tsc, no emit
+npm test           # 21 tests with a software passkey, no browser needed
+npm start          # http://localhost:8790
+```
+
 The owner console (React + Vite, mock data until the API exists) lives in `console/`:
 
 ```bash
