@@ -1,6 +1,6 @@
 # AAuth-protected MCP spike
 
-Alice keeps a list of links, each marked Everyone, Ask me or Only me. Bob's agent (Claude Code) proposes a mission to Bob's person server, and Bob approves it from a QR code. The agent then reaches Alice's MCP server through a stdio proxy, which signs every request with AAuth (draft-hardt-oauth-aauth-protocol-11) under that mission. Alice's server returns Everyone items at once. For Ask-me items it asks Alice while the call waits. Only-me items never appear. Each item the agent asks for needs its own scope, so it goes back through Bob's person server first.
+Alice keeps a list of links, each marked Everyone, Ask me or Only me. Bob's agent (Claude Code) proposes a mission to Bob's person server, and Bob approves it from a QR code on a phone signed in to that server. The agent then reaches Alice's MCP server through a stdio proxy, which signs every request with AAuth (draft-hardt-oauth-aauth-protocol-11) under that mission. Alice's server returns Everyone items at once. For Ask-me items it asks Alice while the call waits. Only-me items never appear. Each item the agent asks for needs its own scope, so it goes back through Bob's person server first.
 
 It runs on one laptop, or on two laptops behind a Cloudflare Tunnel. No real accounts are used.
 
@@ -13,9 +13,18 @@ It runs on one laptop, or on two laptops behind a Cloudflare Tunnel. No real acc
 | `https://bob-agent.aauth.test` | Bob's agent provider, which publishes the agent's key | `bob.mjs` | 4403 |
 | `aauth:claude@bob-agent.aauth.test` | Bob's agent | `proxy.mjs`, started by Claude Code | stdio |
 
-AAuth server identifiers must be `https` with no port. Locally, `loopback.mjs` sends `*.aauth.test` connections to `127.0.0.1` at the socket level, in our processes and in mockin's. URLs, `Host` headers and signatures all keep the real identifiers. Set `AAUTH_PS`, `AAUTH_RESOURCE` and `AAUTH_AGENT` in `.env` at the repo root to use public hostnames instead.
+AAuth server identifiers must be `https` with no port. The local ports can be moved with `AAUTH_PS_PORT`, `AAUTH_RESOURCE_PORT`, `AAUTH_AGENT_PORT` and `AAUTH_MOCKIN_PORT`, to run a second world beside the first. Locally, `loopback.mjs` sends `*.aauth.test` connections to `127.0.0.1` at the socket level, in our processes and in mockin's. URLs, `Host` headers and signatures all keep the real identifiers. Set `AAUTH_PS`, `AAUTH_RESOURCE` and `AAUTH_AGENT` in `.env` at the repo root to use public hostnames instead.
 
-The front serves `/mission` (the -11 `mission_endpoint`), `/interact` (Bob's approval page, which the QR code opens) and Bob's `/api`. It refuses any person token request that names no mission Bob approved, and passes the rest of `/aauth/*` through to mockin. mockin's `/mock` control API stays on its private port.
+The front serves:
+- `/mission`, the -11 `mission_endpoint`;
+- `/interact`, the interaction URL the QR code opens;
+- `/bob`, Bob's own page, where proposals and held requests appear live;
+- `/pair`, which signs a browser in as Bob;
+- Bob's `/api`.
+
+It refuses any person token request that names no mission Bob approved. It judges each auth token request with Bob's supervisor (below), and passes the rest of `/aauth/*` through to mockin. mockin's `/mock` control API stays on its private port.
+
+The code in an interaction link only says which request it is (§11.6.3.1). The agent receives the code too, so the code alone answers nothing. Bob answers from a browser signed in through `npm run pair`, and a script answers with Bob's console token. Codes are Crockford base32. They are read case-insensitively, without hyphens, and with I, L and O folded to 1 and 0. Each code works once. A proposal or held request waits 15 minutes; after that its poll answers `408 expired`. A poll for a request Bob denied answers `403 denied`.
 
 ## Run it
 
@@ -29,26 +38,36 @@ npm run world
 
 `npm run world` runs both sides in one process. On two laptops, run `npm run bob` on Bob's and `npm run alice` on Alice's, each behind a tunnel (see below). Leave it running; it logs each AAuth step.
 
-In a second terminal, propose a mission as Bob's agent. `npm run mission` prints a QR code and a link to Bob's approval page, then waits. Bob can narrow the text before approving. The approved mission is saved in `.keys/mission.json`, and the proxy runs under it.
+In a second terminal, sign Bob's phone in once. `npm run pair` prints a QR code for a one-time link; opening it signs that browser in as Bob for seven days, and lands on Bob's page.
+
+```bash
+npm run pair
+```
+
+Then propose a mission as Bob's agent. `npm run mission` prints a QR code and a link to the proposal, then waits. Bob opens it on the signed-in phone, or finds it on his page, and can narrow the text before approving. The approved mission is saved in `.keys/mission.json`, and the proxy runs under it.
 
 ```bash
 npm run mission                 # the default mission
 npm run mission -- "<text>"      # another one
 ```
 
-The checks need no mission of their own; each run proposes one and approves it on Bob's page:
+The checks need no mission of their own. Each run proposes one and approves it as Bob, with his console token:
 
 | Command | Case | Expected result |
 |---|---|---|
-| `npm run check` | All eight cases below, under one fresh mission | `all 8 passed` |
+| `npm run check` | All twelve cases below, under one fresh mission | `all 12 passed` |
 | `node client-check.mjs everyone` | Two Everyone items | Both come back |
 | `node client-check.mjs ask` | An Ask-me item | The call waits; the script answers as Alice (approve) through `/api`; the item comes back |
 | `node client-check.mjs deny` | An Ask-me item | Same, but Alice denies; the item is `declined` |
 | `node client-check.mjs only_me` | A query matching an Only-me item | `not_found`; Alice's log shows it withheld |
 | `node client-check.mjs revoked` | Alice revokes Bob, then Bob's agent calls | `403 requester_revoked`; the script restores Bob afterwards |
 | `node client-check.mjs no_mission` | The proxy names no mission | Bob's person server refuses the person token: `403 mission_required` |
-| `node client-check.mjs unapproved` | The proxy names a mission Bob never approved | `403 mission_not_approved` |
-| `node client-check.mjs mission_denied` | Bob denies a proposed mission on his page | The proposal ends in `403 access_denied` |
+| `node client-check.mjs unapproved` | The proxy names a mission Bob never approved | `400 invalid_request`, the same answer as for another agent's mission (§8.7) |
+| `node client-check.mjs mission_denied` | Bob denies a proposed mission | The proposal ends in `403 denied` |
+| `node client-check.mjs self_approval` | The agent posts its own approval with the code it was given | `401`; the proposal stays pending until Bob denies it |
+| `node client-check.mjs review_allow` | An item the mission text does not mention | The supervisor holds it; Bob's page shows the agent's reason; Bob allows; the item comes back |
+| `node client-check.mjs review_deny` | Same, and Bob denies | `403 denied`: Bob declined the request |
+| `node client-check.mjs remembered_deny` | Bob denies an item, then the agent asks again | The supervisor refuses the second request from the log, without asking Bob |
 | `npm run check:consent` | Bob must approve | The agent waits on a consent link and code; the script approves it after 2 seconds |
 
 To run it from Claude Code, approve a mission (`npm run mission`), then write the MCP config for this checkout (`mcp.json` is gitignored):
@@ -69,7 +88,27 @@ claude -p "Use the alice server to see what Alice shares, then decide whether Bo
 
 ## Bob's API
 
-Bob's person server serves `GET /api/state` (missions, newest first, and the mission log) and `POST /api/missions/{id}` with `{decision: "approve" | "deny", description?}`, under `Authorization: Bearer <token>`. The token is `BOB_CONSOLE_TOKEN`, or else the one generated into `.keys/bob-console-token`. The approval page needs no token: the code in its link is what lets Bob approve.
+Every call needs `Authorization: Bearer <token>`, where the token is `BOB_CONSOLE_TOKEN` or else the one generated into `.keys/bob-console-token`.
+
+| Call | Body | Effect |
+|---|---|---|
+| `GET /api/state` | | `{missions, reviews, log}`, newest first. Missions carry their blob bytes (`blob_b64`) |
+| `POST /api/missions/{id}` | `{decision: "approve" \| "deny", description?}` | Answers a proposal; `description` narrows the text |
+| `POST /api/reviews/{id}` | `{decision: "approve" \| "deny"}` | Answers a request the supervisor held |
+| `POST /api/pair` | | `{url, code, expires_at}`: a one-time link that signs a browser in as Bob. `npm run pair` prints it as a QR code |
+
+## Bob's supervisor
+
+On each auth token request, the front judges every scope the agent does not already hold:
+- `context`, access to Alice's server itself, is allowed when the approved blob lists the resource, and held for Bob otherwise.
+- Each `item:<id>` goes to `decide({mission, act, log})`.
+  - `mission` is `{s256, status, blob_b64}`.
+  - `act` is `{type: "token_request", agent, resource, scope, justification?}`. The justification is the `reason` of the tool call, which the proxy sends, as -11 allows, in the token request.
+  - `log` is this mission's earlier decisions and Bob's answers, oldest first.
+
+Any DENY refuses the request with `403 denied`. Any REVIEW holds the auth token that mockin minted and answers `202`. The request then appears on Bob's page with the agent's reason, until Bob answers. Otherwise the token goes straight to the agent.
+
+`decide()` is `supervisor/decide.mjs` (see [supervisor/README.md](../../supervisor/README.md)). Its fixed rules go first. One of them repeats an earlier answer for the same scope, so Bob is not asked twice. Whatever the rules leave open goes to Jev through OpenRouter, and anything Jev is unsure of, or cannot answer, is held for Bob. When Bob approves a mission he can tick "Rules only". Nothing under that mission then goes to Jev, and whatever the rules leave open is held for him. The checks approve their missions that way, so their results never depend on the model.
 
 ## Alice's console API
 
@@ -130,12 +169,12 @@ A laptop that is not logged in to the account runs a tunnel with its token inste
 cloudflared tunnel run --url http://127.0.0.1:4402 --token <token>
 ```
 
-Every laptop involved needs the same three lines in `.env` at the repo root. On one laptop, run both tunnels there and `npm run world`.
+Every laptop involved needs the same three lines in `.env` at the repo root. On one laptop, run both tunnels there and `npm run world`. The team's hostnames are on puddlecloud.com. The `parley-bob` tunnel runs on Bob's laptop and serves parley-bob and parley-agent. The `parley-alice` tunnel runs on Alice's and serves parley-alice and parley-console.
 
 ```bash
-AAUTH_PS=https://ps.<domain>
-AAUTH_AGENT=https://bob-agent.<domain>
-AAUTH_RESOURCE=https://alice.<domain>
+AAUTH_PS=https://parley-bob.puddlecloud.com
+AAUTH_AGENT=https://parley-agent.puddlecloud.com
+AAUTH_RESOURCE=https://parley-alice.puddlecloud.com
 ```
 
 To try it without a zone, `cloudflared tunnel --url http://127.0.0.1:<port>` prints a random `trycloudflare.com` hostname for one port. Run one per port, then start the servers with those hostnames in `.env`. They change on every run. If `~/.cloudflared/config.yml` exists, also pass `--config` naming an empty file.
@@ -153,7 +192,8 @@ The tunnel passes the public hostname through as the `Host` header, and the HTTP
 
 ## Limits
 
-- **Missions.** The front implements mission creation and approval (§8.1, §8.2) and keeps a log, but returns no `person_tokens` in the approval response and offers no clarification chat. Missions last 24 hours. mockin itself still accepts any mission hash; the front is what checks it.
+- **Missions.** The front implements mission creation and approval (§8.1, §8.2) and keeps a log. It returns no `person_tokens` in the approval response, since minting them needs a request the agent signed, and it offers no clarification chat. Missions last 24 hours. mockin itself still accepts any mission hash; the front is what checks it.
+- **Bob's sign-in.** Bob is a browser that opened a `/pair` link, or a script holding his console token. When Bob's agent runs on the laptop that also runs his person server, it can read `.keys/bob-console-token`, and so answer for Bob. A person server on its own host closes that.
 - **Who is asking.** Alice's server knows a requester only as a person server plus a pairwise `sub`, labelled with the name that server puts in the auth token. Nothing proves that name.
 - **Reasons.** The `reason` Alice sees is the agent's own claim. Bob's mission text stays at Bob's person server.
 - **Consent.** mockin approves automatically unless `check:consent` or `npm run world:consent` turns approval on. Its consent link resolves only where Bob's person server is reachable: this machine, or anywhere once tunnelled.

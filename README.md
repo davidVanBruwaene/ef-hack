@@ -13,6 +13,7 @@ cd spike/aauth-mcp
 npm ci --ignore-scripts
 npm run world      # leave it running
 npm run check      # in a second terminal
+npm run pair       # once: a QR code signs Bob's phone in to his person server
 npm run mission    # before using it from Claude Code: Bob approves the mission from a QR code
 ```
 

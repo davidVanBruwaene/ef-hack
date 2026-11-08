@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { actKey, applyRules, DENIALS_BEFORE_REVIEW, MAX_AGENT_TEXT, missionBlob } from '../rules.mjs'
+import { answers, applyRules, DENIALS_BEFORE_REVIEW, MAX_AGENT_TEXT, missionBlob, normalizeAct, sameAct } from '../rules.mjs'
 import { acts, AGENT, blob, entry, mission, NOW, record, RESOURCE, S256, tokenRequest } from './fixtures.mjs'
 
 const decide = (args, now = NOW) => applyRules(args, { now })
@@ -16,6 +16,7 @@ test('the mission is read from blob_b64, a decoded blob, a blob member, or the -
   assert.deepEqual(missionBlob(blob), blob)
   assert.deepEqual(missionBlob({ blob }), blob)
   assert.deepEqual(missionBlob({ s256: S256, mission: mission.blob_b64 }), blob)
+  assert.deepEqual(missionBlob({ s256: S256, ...blob }), { s256: S256, ...blob })
   assert.equal(missionBlob({ blob_b64: Buffer.from('not json').toString('base64url') }), null)
   assert.equal(missionBlob({ ...blob, description: '  ' }), null)
   assert.equal(missionBlob(undefined), null)
@@ -55,7 +56,7 @@ test('completion, mission updates and unknown or incomplete acts go to the perso
   assert.equal(rule({ mission, act: { type: 'mission_completion', agent: AGENT, summary: 'Booked Tuesday 10:00.' } }), 'completion')
   assert.equal(rule({ mission, act: { type: 'mission_update', agent: AGENT, description: 'Also book lunch.' } }), 'mission_update')
   assert.equal(rule({ mission, act: { type: 'wire_money', agent: AGENT } }), 'unknown_act')
-  assert.equal(rule({ mission, act: { kind: 'token', agent: AGENT, resource: RESOURCE } }), 'unknown_act')
+  assert.equal(rule({ mission, act: { kind: 'wire', agent: AGENT, resource: RESOURCE } }), 'unknown_act')
   assert.equal(rule({ mission }), 'unknown_act')
   assert.equal(rule({ mission, act: { type: 'token_request', agent: AGENT, scope: 'item:calendar' } }), 'incomplete_act')
   assert.equal(rule({ mission, act: { type: 'permission_request', agent: AGENT } }), 'incomplete_act')
@@ -90,11 +91,56 @@ test('a REVIEW, a mission event or another mission in the log settles nothing', 
 })
 
 test('the same request is recognised across scope order and a trailing slash', () => {
-  assert.equal(actKey(tokenRequest('item:a item:b')), actKey(tokenRequest('item:b  item:a')))
-  assert.equal(actKey({ ...acts.calendar, resource: `${RESOURCE}/` }), actKey(acts.calendar))
-  assert.notEqual(actKey(acts.calendar), actKey(acts.address))
+  assert.ok(sameAct(tokenRequest('item:a item:b'), tokenRequest('item:b  item:a')))
+  assert.ok(sameAct({ ...acts.calendar, resource: `${RESOURCE}/` }, acts.calendar))
+  assert.ok(sameAct({ type: 'token_request', scope: 'item:calendar' }, acts.calendar))
+  assert.ok(!sameAct(acts.calendar, acts.address))
+  assert.ok(!sameAct({ ...acts.calendar, resource: 'https://carol.aauth.test' }, acts.calendar))
   const d = decide({ mission, act: { ...acts.calendar, resource: `${RESOURCE}/` }, log: [entry(acts.calendar, 'ALLOW')] })
   assert.equal(d.rule, 'decided_before')
+})
+
+test('the short kind from the first contract note is read as the type', () => {
+  assert.deepEqual(normalizeAct({ kind: 'token', scope: 'item:calendar' }), { kind: 'token', scope: 'item:calendar', type: 'token_request' })
+  assert.equal(normalizeAct({ kind: 'permission' }).type, 'permission_request')
+  assert.equal(normalizeAct({ kind: 'constructor' }).type, undefined)
+  assert.equal(normalizeAct({ type: 'token_request', kind: 'permission' }).type, 'token_request')
+  const asKind = { ...acts.calendar, type: undefined, kind: 'token' }
+  assert.equal(decide({ mission, act: asKind }), null)
+  assert.equal(rule({ mission, act: asKind, log: [entry(acts.calendar, 'DENY')] }), 'decided_before')
+})
+
+const authTokenRow = (verdicts, decision) => ({
+  at: '2026-11-07T23:40:00.000Z', mission: 'm_fixture', mission_s256: S256, event: 'auth_token', decision,
+  agent: AGENT, detail: verdicts.map(v => v.scope).join(' '), verdicts,
+})
+const reviewRow = (status, detail) => ({
+  at: '2026-11-07T23:41:00.000Z', mission: 'm_fixture', mission_s256: S256, event: `review_${status}`, decided_by: 'Bob', detail,
+})
+
+test("the person server's own rows count: auth_token verdicts and Bob's review answers", () => {
+  const jevDenied = authTokenRow([{ scope: 'item:address', decision: 'DENY', by: 'jev', p: 0.03, model: 'm', reason: 'r' }], 'DENY')
+  assert.equal(decide({ mission, act: acts.address, log: [jevDenied] }).reason, 'The same request was denied earlier in this mission, by Jev.')
+  const held = authTokenRow([{ scope: 'item:phone', decision: 'REVIEW', by: 'jev' }], 'REVIEW')
+  assert.equal(rule({ mission, act: acts.phone, log: [held] }), null)
+  assert.equal(decide({ mission, act: acts.phone, log: [held, reviewRow('approved', 'item:phone')] }).reason,
+    'The same request was allowed earlier in this mission, by Bob.')
+  assert.equal(decide({ mission, act: acts.calendar, log: [reviewRow('denied', 'item:calendar item:phone')] }).decision, 'DENY')
+})
+
+test("lifecycle rows, and an auth_token row's overall decision, are not answers", () => {
+  const lifecycle = [
+    { at: 'x', mission: 'm_fixture', event: 'proposed', agent: AGENT, detail: blob.description },
+    { at: 'x', mission: 'm_fixture', mission_s256: S256, event: 'approved', decided_by: 'Bob', detail: blob.description },
+    { at: 'x', mission: 'm_fixture', mission_s256: S256, event: 'review_opened', agent: AGENT, detail: 'item:phone' },
+    { at: 'x', mission: 'm_fixture', mission_s256: S256, event: 'person_token', agent: AGENT, detail: RESOURCE },
+    { at: 'x', mission_s256: S256, event: 'constructor', detail: 'item:phone' },
+  ]
+  assert.deepEqual(answers(lifecycle, mission), [])
+  const mixed = authTokenRow([{ scope: 'item:calendar', decision: 'ALLOW', by: 'jev' }, { scope: 'item:address', decision: 'DENY', by: 'jev' }], 'DENY')
+  assert.deepEqual(answers([mixed], mission).map(a => [a.act.scope, a.decision]), [['item:calendar', 'ALLOW'], ['item:address', 'DENY']])
+  assert.equal(rule({ mission, act: acts.projects, log: [mixed, mixed] }), null)
+  assert.equal(rule({ mission, act: acts.projects, log: [mixed, mixed, mixed] }), 'denial_streak')
 })
 
 test(`after ${DENIALS_BEFORE_REVIEW} denials in the mission, new requests go to the person`, () => {
