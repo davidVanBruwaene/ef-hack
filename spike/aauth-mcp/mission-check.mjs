@@ -470,18 +470,20 @@ if (unknown.length) { console.log(`unknown case ${unknown.join(', ')}; cases: ${
 
 console.log(`Bob's person server ${PS}, agent ${AGENT_SUB}, Alice's server ${RESOURCE}, Jev ${JEV ? 'on for the cases that need it' : 'off'}`)
 let failed = 0
+let skipped = 0
 for (const name of names) {
   const t = { failed: [], warned: [] }
   t.must = (ok, what) => { if (!ok) t.failed.push(what) }
   t.should = (ok, what) => { if (!ok) t.warned.push(what) }
   let summary
   try { summary = await within(60_000, name, CASES[name](t)) } catch (err) { t.failed.push(`threw: ${err.message}`) }
-  if (summary?.skip) { console.log(`- ${name}: skipped, ${summary.skip}`); continue }
+  if (summary?.skip) { skipped++; console.log(`- ${name}: skipped, ${summary.skip}`); continue }
   if (t.failed.length) failed++
   console.log(`${t.failed.length ? '✗' : '✓'} ${name}${summary ? `: ${summary}` : ''}`)
   for (const f of t.failed) console.log(`    MUST ${f}`)
   for (const w of t.warned) console.log(`    SHOULD ${w}`)
 }
 await cleanUp().catch(err => console.log(`(cleanup failed: ${err.message})`))
-console.log(failed ? `${failed} of ${names.length} failed` : `all ${names.length} passed`)
+const ran = names.length - skipped
+console.log(`${failed ? `${failed} of ${ran} failed` : `all ${ran} passed`}${skipped ? `, ${skipped} skipped` : ''}`)
 process.exitCode = failed ? 1 : 0
