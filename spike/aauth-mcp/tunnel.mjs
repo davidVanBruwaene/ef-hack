@@ -1,10 +1,10 @@
 // Named Cloudflare tunnels for two laptops: writes one side's cloudflared config from .env, or checks the public hostnames. See two-laptops.md.
-import { writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { AGENT, PORTS, PS, RESOURCE } from './config.mjs'
 
-const USAGE = `usage: node tunnel.mjs config bob|alice [--tunnel <name or id>] [--credentials <file>] [--out <file>]
+const USAGE = `usage: node tunnel.mjs config bob|alice [--credentials <tunnel .json>] [--tunnel <name or id>] [--console <port>] [--out <file> [--force]]
        node tunnel.mjs check`
 
 const SERVERS = {
@@ -14,10 +14,13 @@ const SERVERS = {
 }
 // mockin's port is absent on purpose: only the front on PORTS.ps may reach it.
 const SIDES = {
-  bob: { label: "Bob's", tunnel: 'ef-hack-bob', servers: [SERVERS.ps, SERVERS.agent] },
-  alice: { label: "Alice's", tunnel: 'ef-hack-alice', servers: [SERVERS.resource] },
+  bob: { label: "Bob's", tunnel: 'parley-bob', servers: [SERVERS.ps, SERVERS.agent] },
+  alice: { label: "Alice's", tunnel: 'parley-alice', servers: [SERVERS.resource] },
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const DEFAULT_CONFIG = join(homedir(), '.cloudflared', 'config.yml')
+// The console is not an AAuth server; its hostname is the passkey RP_ID that the store reads.
+const CONSOLE_HOST = process.env.RP_ID?.trim()
 
 const fail = msg => { console.error(`✗ ${msg}`); process.exit(1) }
 
@@ -33,37 +36,61 @@ function publicHost({ id, what }) {
   return u.hostname
 }
 
+function consoleHost() {
+  if (!CONSOLE_HOST) fail("--console needs RP_ID, the console's hostname, in .env at the repo root")
+  if (CONSOLE_HOST !== CONSOLE_HOST.toLowerCase() || !/^[a-z0-9.-]+$/.test(CONSOLE_HOST)) fail(`RP_ID is "${CONSOLE_HOST}", which is not a lowercase hostname`)
+  return CONSOLE_HOST
+}
+
 function checkDistinct() {
-  const hosts = Object.values(SERVERS).map(s => new URL(s.id).hostname)
-  if (new Set(hosts).size !== hosts.length) fail(`AAUTH_PS, AAUTH_AGENT and AAUTH_RESOURCE need three different hostnames; got ${hosts.join(', ')}`)
+  const hosts = [...Object.values(SERVERS).map(s => new URL(s.id).hostname), ...(CONSOLE_HOST ? [CONSOLE_HOST] : [])]
+  if (new Set(hosts).size !== hosts.length) fail(`AAUTH_PS, AAUTH_AGENT, AAUTH_RESOURCE and RP_ID need different hostnames; got ${hosts.join(', ')}`)
+}
+
+// The id comes from the credentials file; the secret in it is never printed.
+function tunnelOf(flags, side) {
+  if (!flags.credentials) {
+    const tunnel = flags.tunnel ?? side.tunnel
+    return { tunnel, credentials: UUID.test(tunnel) ? join(homedir(), '.cloudflared', `${tunnel}.json`) : undefined }
+  }
+  const credentials = resolve(flags.credentials)
+  let raw, id
+  try { raw = readFileSync(credentials, 'utf8') } catch (err) { fail(`cannot read ${credentials}: ${err.code}`) }
+  try { id = JSON.parse(raw).TunnelID } catch { fail(`${credentials} is not a cloudflared credentials file`) }
+  if (!flags.tunnel && !UUID.test(id ?? '')) fail(`${credentials} has no TunnelID; pass --tunnel <id>`)
+  return { tunnel: flags.tunnel ?? id, credentials }
 }
 
 function config(sideName, flags) {
   const side = SIDES[sideName] ?? fail(`the side is bob or alice, not "${sideName ?? ''}"\n${USAGE}`)
+  if (flags.console && sideName !== 'alice') fail("--console belongs on Alice's side, which serves the console")
+  if (flags.console && !/^\d+$/.test(flags.console)) fail(`--console takes the console's local port, not "${flags.console}"`)
   checkDistinct()
-  const tunnel = flags.tunnel ?? side.tunnel
-  const credentials = flags.credentials ? resolve(flags.credentials)
-    : UUID.test(tunnel) ? join(homedir(), '.cloudflared', `${tunnel}.json`) : undefined
-  const hosts = side.servers.map(publicHost)
+  const { tunnel, credentials } = tunnelOf(flags, side)
+  const routes = side.servers.map(s => ({ host: publicHost(s), port: s.port }))
+  if (flags.console) routes.push({ host: consoleHost(), port: Number(flags.console) })
   const yaml = [
     `# ${side.label} side, written by spike/aauth-mcp/tunnel.mjs from .env and the local ports. Rerun it after changing either.`,
     `tunnel: ${JSON.stringify(tunnel)}`,
     ...(credentials ? [`credentials-file: ${JSON.stringify(credentials)}`] : []),
     'ingress:',
-    ...side.servers.flatMap((s, i) => [`  - hostname: ${hosts[i]}`, `    service: http://127.0.0.1:${s.port}`]),
+    ...routes.flatMap(r => [`  - hostname: ${r.host}`, `    service: http://127.0.0.1:${r.port}`]),
     '  - service: http_status:404',
     '',
   ].join('\n')
 
-  if (flags.out) writeFileSync(flags.out, yaml)
-  else process.stdout.write(yaml)
+  let note = ''
+  if (!flags.out) process.stdout.write(yaml)
+  else if (!existsSync(flags.out) || flags.force) { writeFileSync(flags.out, yaml); note = `wrote ${flags.out}` }
+  else if (readFileSync(flags.out, 'utf8') === yaml) note = `${flags.out} is already up to date`
+  else fail(`${flags.out} exists with other contents. Look at it, then add --force to replace it.`)
+
   const file = flags.out ?? '<this config>'
   console.error([
-    flags.out ? `wrote ${flags.out}` : '',
-    credentials ? '' : `No credentials-file: cloudflared finds "${tunnel}" by name only on a laptop logged in to the account. Elsewhere pass --tunnel <id>, or run with --token.`,
-    'Once, on a laptop logged in to Cloudflare (cloudflared tunnel login):',
-    ...(UUID.test(tunnel) ? [] : [`  cloudflared tunnel create ${tunnel}`]),
-    ...hosts.map(h => `  cloudflared tunnel route dns ${tunnel} ${h}`),
+    note,
+    credentials ? '' : `No credentials-file: cloudflared then finds "${tunnel}" by name, which needs cert.pem from cloudflared tunnel login. On another laptop pass --credentials <the tunnel's .json>.`,
+    existsSync(DEFAULT_CONFIG) ? 'cloudflared falls back to ~/.cloudflared/config.yml whenever --config is missing, so pass --config on every cloudflared command, route dns included.' : '',
+    sideName === 'alice' && !flags.console ? `No console route: add --console <port> to serve ${CONSOLE_HOST ?? 'the RP_ID hostname'} from this tunnel.` : '',
     'Each run, from spike/aauth-mcp:',
     `  npm run ${sideName}`,
     `  cloudflared tunnel --config ${file} run`,
@@ -73,36 +100,36 @@ function config(sideName, flags) {
 
 // Cloudflare's answers when the hop behind a hostname is missing.
 const STATUS_HINTS = {
-  404: "the tunnel has no ingress rule for this hostname: rerun tunnel.mjs config on that side and restart cloudflared",
-  502: 'the tunnel is up but nothing answers on the local port: start npm run bob or npm run alice on that side',
+  404: 'the tunnel has no ingress rule for this hostname: rerun tunnel.mjs config on that side and restart cloudflared',
+  502: 'the tunnel is up but nothing answers on the local port: start that side\'s server',
   530: 'no tunnel is connected for this hostname: start cloudflared on that side',
 }
 const ERROR_HINTS = {
-  ENOTFOUND: 'no DNS record for this hostname yet: cloudflared tunnel route dns, then allow a few minutes for caches',
+  ENOTFOUND: 'no DNS answer here. If dig @1.1.1.1 <host> answers, this resolver cached the miss for up to 30 minutes; if not, run route dns',
   ERR_TLS_CERT_ALTNAME_INVALID: "no certificate covers this hostname: Cloudflare's Universal SSL covers only one level under the zone",
 }
 
 async function check() {
   checkDistinct()
+  const targets = Object.values(SERVERS).map(s => ({ ...s, host: publicHost(s), url: `${s.id}${s.metadata}` }))
+  if (CONSOLE_HOST) targets.push({ what: "Alice's console", host: consoleHost(), url: `https://${CONSOLE_HOST}/` })
   let bad = 0
-  for (const s of Object.values(SERVERS)) {
-    publicHost(s)
-    const url = `${s.id}${s.metadata}`
+  for (const t of targets) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
-      const body = await res.json().catch(() => ({}))
-      const ok = res.status === 200 && body.issuer === s.id
+      const res = await fetch(t.url, { signal: AbortSignal.timeout(10_000), redirect: 'manual' })
+      const body = t.id ? await res.json().catch(() => ({})) : {}
+      const ok = t.id ? res.status === 200 && body.issuer === t.id : res.status >= 200 && res.status < 400
       const why = ok ? '' : STATUS_HINTS[res.status]
-        ?? (res.status === 200 ? `issuer is ${body.issuer ?? 'missing'}: the server there was started with other AAUTH_* values, or the ingress points at the wrong port` : '')
+        ?? (t.id && res.status === 200 ? `issuer is ${body.issuer ?? 'missing'}: the server there was started with other AAUTH_* values, or the ingress points at the wrong port` : '')
       if (!ok) bad++
-      console.log(`${ok ? '✓' : '✗'} ${s.what}: ${url} answered ${res.status}${why ? `; ${why}` : ''}`)
+      console.log(`${ok ? '✓' : '✗'} ${t.what}: ${t.url} answered ${res.status}${why ? `; ${why}` : ''}`)
     } catch (err) {
       bad++
       const code = err.cause?.code ?? err.name
-      console.log(`✗ ${s.what}: ${url} failed with ${code}${ERROR_HINTS[code] ? `; ${ERROR_HINTS[code]}` : `: ${err.cause?.message ?? err.message}`}`)
+      console.log(`✗ ${t.what}: ${t.url} failed with ${code}${ERROR_HINTS[code] ? `; ${ERROR_HINTS[code]}` : `: ${err.cause?.message ?? err.message}`}`)
     }
   }
-  console.log(bad ? `${bad} of 3 unreachable as configured` : 'all 3 hostnames reach the right servers')
+  console.log(bad ? `${bad} of ${targets.length} hostnames do not reach the right server` : `all ${targets.length} hostnames reach the right servers`)
   process.exitCode = bad ? 1 : 0
 }
 
@@ -110,9 +137,10 @@ const [mode, ...rest] = process.argv.slice(2)
 const flags = {}
 const positional = []
 for (let i = 0; i < rest.length; i++) {
-  const m = rest[i].match(/^--(tunnel|credentials|out)$/)
-  if (m) flags[m[1]] = rest[++i] ?? fail(`--${m[1]} needs a value\n${USAGE}`)
-  else positional.push(rest[i])
+  const m = rest[i].match(/^--(tunnel|credentials|console|out|force)$/)
+  if (!m) positional.push(rest[i])
+  else if (m[1] === 'force') flags.force = true
+  else flags[m[1]] = rest[++i] ?? fail(`--${m[1]} needs a value\n${USAGE}`)
 }
 if (mode === 'config') config(positional[0], flags)
 else if (mode === 'check') await check()
