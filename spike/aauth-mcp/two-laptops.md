@@ -62,7 +62,7 @@ npm run mcp-config       # then Claude Code, as in the README
 
 Bob answers his agent in the same console as Alice: he signs in at `https://parley-console.puddlecloud.com/` with his store passkey. `MEMBER_MAP` names his member id for his person server, as `{"https://parley-bob.puddlecloud.com": "<member id>"}`, and `npm run console` reads it with `STORE_URL` as Alice's server does. The console then shows his agent's missions and the requests his supervisor holds, beside anything asked of him. `npm run console` reads Bob's person server with his console token, so Alice's laptop needs `BOB_CONSOLE_TOKEN` set to it, handed over in person.
 
-`check:missions` answers for Bob with Bob's console token and approves its missions rules-only. `JEV_LIVE=1 npm run check:missions` also runs the two cases Jev decides, which spends a few OpenRouter calls.
+`check:missions` answers for Bob with Bob's console token and approves its missions rules-only. Each run leaves about 20 approved test missions at Bob's person server for 24 hours, so give the demo a world `check:missions` never ran against, for example a fresh `AAUTH_DATA_DIR`. `JEV_LIVE=1 npm run check:missions` also runs the two cases Jev decides, which spends a few OpenRouter calls.
 
 Some `npm run check` cases answer as Alice through her `/api`. On Bob's laptop that needs `ALICE_CONSOLE_TOKEN` set to Alice's token. Without it, the script generates a token of its own, which Alice's server refuses. The token is a secret, so hand it over in person.
 
