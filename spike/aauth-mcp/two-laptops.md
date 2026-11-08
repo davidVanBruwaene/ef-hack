@@ -1,6 +1,6 @@
 # Two laptops behind named Cloudflare tunnels
 
-Bob's laptop runs `npm run bob`, which starts Bob's person server and agent provider, and it runs Claude Code. Alice's laptop runs `npm run alice`, which starts Alice's server, and Alice's console. Each laptop runs one named tunnel. The other laptop and the phones reach it through Cloudflare, so neither laptop needs an inbound connection or a shared network. All commands below run in `spike/aauth-mcp`.
+Bob's laptop runs `npm run bob`, which starts Bob's person server and agent provider, and it runs Claude Code. Alice's laptop runs three things: `npm run alice`, which starts Alice's server; the people store in `store/`; and `npm run console`, which serves the console that Alice and Bob both use. Each laptop runs one named tunnel. The other laptop and the phones reach it through Cloudflare, so neither laptop needs an inbound connection or a shared network. All commands below run in `spike/aauth-mcp`.
 
 ## The names
 
@@ -9,7 +9,7 @@ Bob's laptop runs `npm run bob`, which starts Bob's person server and agent prov
 | `parley-bob.puddlecloud.com` | parley-bob | 4401 | Bob's person server and approval page (`AAUTH_PS`) |
 | `parley-agent.puddlecloud.com` | parley-bob | 4403 | Bob's agent provider (`AAUTH_AGENT`) |
 | `parley-alice.puddlecloud.com` | parley-alice | 4402 | Alice's MCP server and `/api` (`AAUTH_RESOURCE`) |
-| `parley-console.puddlecloud.com` | parley-alice | 5173, from `npm run dev` in `console/` | Alice's console and the passkey store (`RP_ID`) |
+| `parley-console.puddlecloud.com` | parley-alice | 4531 for `npm run console`, 8790 for the store | The console for Alice and Bob, and the passkey store (`RP_ID`) |
 
 The tunnels and DNS records already exist in David's Cloudflare account. Every hostname is one level under the zone, because Cloudflare's Universal SSL certificate covers only that level. A deeper name such as `bob.parley.puddlecloud.com` would fail TLS.
 
@@ -36,18 +36,18 @@ The tunnels and DNS records already exist in David's Cloudflare account. Every h
    node tunnel.mjs config bob --credentials ~/.cloudflared/5d32c91e-d00f-4ac7-af35-44c56fadb0e8.json --out ~/.cloudflared/parley-bob.yml
    cloudflared tunnel --config ~/.cloudflared/parley-bob.yml ingress validate
    # Alice's laptop
-   node tunnel.mjs config alice --credentials ~/.cloudflared/5356e70a-87a0-45c9-a315-5cd7bda96241.json --console 5173 --out ~/.cloudflared/parley-alice.yml
+   node tunnel.mjs config alice --credentials ~/.cloudflared/5356e70a-87a0-45c9-a315-5cd7bda96241.json --console 4531 --store 8790 --out ~/.cloudflared/parley-alice.yml
    cloudflared tunnel --config ~/.cloudflared/parley-alice.yml ingress validate
    ```
 
-   The script takes the tunnel id from the credentials file and never prints the secret. mockin's port is never exposed. If the output file exists with other contents, the script stops unless you add `--force`, and it never writes `~/.cloudflared/config.yml`. The ports come from `config.mjs`, which reads `AAUTH_PS_PORT`, `AAUTH_AGENT_PORT` and `AAUTH_RESOURCE_PORT` from `.env`. Rerun it whenever `.env` or the ports change. The console's route says `localhost` rather than 127.0.0.1, because Vite listens on `[::1]` only on macOS.
+   The script takes the tunnel id from the credentials file and never prints the secret. mockin's port is never exposed. If the output file exists with other contents, the script stops unless you add `--force`, and it never writes `~/.cloudflared/config.yml`. The ports come from `config.mjs`, which reads `AAUTH_PS_PORT`, `AAUTH_AGENT_PORT` and `AAUTH_RESOURCE_PORT` from `.env`. Rerun it whenever `.env` or the ports change. The console's route says `localhost` rather than 127.0.0.1, because Vite listens on `[::1]` only on macOS. With `--store`, Alice's server answers `/api/`, the console server answers `/`, `/assets/` and `/agent/`, and the store answers every other path on the hostname, so all three see the store's sign-in cookie.
 5. **Keys.** Leave `.keys/` alone. Each side generates its own keys on first start and publishes the public halves, so nothing is copied between the laptops.
 
 ## Each run
 
 | Bob's laptop | Alice's laptop |
 |---|---|
-| `npm run bob` | `npm run alice`, and `npm run dev` in `console/` |
+| `npm run bob` | `npm run alice`, `npm start` in `store/`, and `npm run console` after `VITE_API=live npm run build` in `console/` |
 | `cloudflared tunnel --config ~/.cloudflared/parley-bob.yml run` | `cloudflared tunnel --config ~/.cloudflared/parley-alice.yml run` |
 | `node tunnel.mjs check` | `node tunnel.mjs check` |
 
@@ -60,7 +60,9 @@ npm run check:missions   # Bob's person server and supervisor against -11, throu
 npm run mcp-config       # then Claude Code, as in the README
 ```
 
-`check:missions` answers for Bob with Bob's console token and approves its missions rules-only. `JEV_LIVE=1 npm run check:missions` also runs the two cases Jev decides, which spends a few OpenRouter calls.
+Bob answers his agent in the same console as Alice: he signs in at `https://parley-console.puddlecloud.com/` with his store passkey. `MEMBER_MAP` names his member id for his person server, as `{"https://parley-bob.puddlecloud.com": "<member id>"}`, and `npm run console` reads it with `STORE_URL` as Alice's server does. The console then shows his agent's missions and the requests his supervisor holds, beside anything asked of him. `npm run console` reads Bob's person server with his console token, so Alice's laptop needs `BOB_CONSOLE_TOKEN` set to it, handed over in person.
+
+`check:missions` answers for Bob with Bob's console token and approves its missions rules-only. Each run leaves about 20 approved test missions at Bob's person server for 24 hours, so give the demo a world `check:missions` never ran against, for example a fresh `AAUTH_DATA_DIR`. `JEV_LIVE=1 npm run check:missions` also runs the two cases Jev decides, which spends a few OpenRouter calls.
 
 Some `npm run check` cases answer as Alice through her `/api`. On Bob's laptop that needs `ALICE_CONSOLE_TOKEN` set to Alice's token. Without it, the script generates a token of its own, which Alice's server refuses. The token is a secret, so hand it over in person.
 

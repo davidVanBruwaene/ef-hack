@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { AGENT, PORTS, PS, RESOURCE } from './config.mjs'
 
-const USAGE = `usage: node tunnel.mjs config bob|alice [--credentials <tunnel .json>] [--tunnel <name or id>] [--console <port>] [--out <file> [--force]]
+const USAGE = `usage: node tunnel.mjs config bob|alice [--credentials <tunnel .json>] [--tunnel <name or id>] [--console <port> [--store <port>]] [--out <file> [--force]]
        node tunnel.mjs check`
 
 const SERVERS = {
@@ -21,6 +21,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DEFAULT_CONFIG = join(homedir(), '.cloudflared', 'config.yml')
 // The console is not an AAuth server; its hostname is the passkey RP_ID that the store reads.
 const CONSOLE_HOST = process.env.RP_ID?.trim()
+// With --store, Alice's server answers /api/, agent-console.mjs these paths and the store the rest, so all three see the store's sid cookie.
+const CONSOLE_PATHS = '^/($|assets/|agent/)'
 
 const fail = msg => { console.error(`✗ ${msg}`); process.exit(1) }
 // A quoted ~ reaches node unexpanded.
@@ -67,19 +69,23 @@ function config(sideName, flags) {
   const side = SIDES[sideName] ?? fail(`the side is bob or alice, not "${sideName ?? ''}"\n${USAGE}`)
   if (flags.console && sideName !== 'alice') fail("--console belongs on Alice's side, which serves the console")
   if (flags.console && !/^\d+$/.test(flags.console)) fail(`--console takes the console's local port, not "${flags.console}"`)
+  if (flags.store && !flags.console) fail('--store goes with --console: the store shares the console\'s hostname')
+  if (flags.store && !/^\d+$/.test(flags.store)) fail(`--store takes the store's local port, not "${flags.store}"`)
   const out = flags.out && expand(flags.out)
   if (out === DEFAULT_CONFIG) fail(`--out must not be ${DEFAULT_CONFIG}: it is cloudflared's default and names another tunnel. Write a parley file, such as ~/.cloudflared/parley-${sideName}.yml.`)
   checkDistinct()
   const { tunnel, credentials } = tunnelOf(flags, side)
   const routes = side.servers.map(s => ({ host: publicHost(s), origin: `http://127.0.0.1:${s.port}` }))
   // Vite listens on [::1] only on macOS; for localhost, cloudflared tries both address families.
-  if (flags.console) routes.push({ host: consoleHost(), origin: `http://localhost:${flags.console}` })
+  if (flags.store) routes.push({ host: consoleHost(), path: '^/api/', origin: `http://127.0.0.1:${PORTS.resource}` })
+  if (flags.console) routes.push({ host: consoleHost(), ...(flags.store ? { path: CONSOLE_PATHS } : {}), origin: `http://localhost:${flags.console}` })
+  if (flags.store) routes.push({ host: consoleHost(), origin: `http://localhost:${flags.store}` })
   const yaml = [
     `# ${side.label} side, written by spike/aauth-mcp/tunnel.mjs from .env and the local ports. Rerun it after changing either.`,
     `tunnel: ${JSON.stringify(tunnel)}`,
     ...(credentials ? [`credentials-file: ${JSON.stringify(credentials)}`] : []),
     'ingress:',
-    ...routes.flatMap(r => [`  - hostname: ${r.host}`, `    service: ${r.origin}`]),
+    ...routes.flatMap(r => [`  - hostname: ${r.host}`, ...(r.path ? [`    path: ${JSON.stringify(r.path)}`] : []), `    service: ${r.origin}`]),
     '  - service: http_status:404',
     '',
   ].join('\n')
@@ -142,7 +148,7 @@ const [mode, ...rest] = process.argv.slice(2)
 const flags = {}
 const positional = []
 for (let i = 0; i < rest.length; i++) {
-  const m = rest[i].match(/^--(tunnel|credentials|console|out|force)$/)
+  const m = rest[i].match(/^--(tunnel|credentials|console|store|out|force)$/)
   if (!m) positional.push(rest[i])
   else if (m[1] === 'force') flags.force = true
   else flags[m[1]] = rest[++i] ?? fail(`--${m[1]} needs a value\n${USAGE}`)

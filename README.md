@@ -40,6 +40,8 @@ Set `VITE_API=live` (and `VITE_API_TARGET` for the server's URL) to use the real
 
 In live mode the dev server also sends the store's routes (`/auth`, `/me`, `/network`, `/invite`, `/join`, `/pair`, `/dev`) to `VITE_STORE_TARGET` (default `http://localhost:8790`). The console then signs in with the store's passkeys and edits the items there, while requests and activity still come from `/api`. Behind a tunnel, set `PUBLIC_URL` to the console's public URL so Vite accepts that hostname, and start the store with the same URL in `RP_ORIGINS` and the hostname in `RP_ID`.
 
+Behind the tunnel, Alice and Bob use the same console. Build it with `VITE_API=live npm run build` in `console/`, then run `npm run console` in `spike/aauth-mcp` (port 4531, with `STORE_URL` and `MEMBER_MAP` set as for Alice's server). It serves the build and adds the missions and held requests that wait for Bob at his person server. [spike/aauth-mcp/two-laptops.md](spike/aauth-mcp/two-laptops.md) covers the tunnel.
+
 On two laptops, run `npm run bob` on one and `npm run alice` on the other, behind a Cloudflare Tunnel. The spike README covers the setup.
 
 Keep this section current: anyone should be able to run main from a fresh clone.
