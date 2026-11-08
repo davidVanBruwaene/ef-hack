@@ -1,4 +1,6 @@
 import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const envFile = new URL('../../.env', import.meta.url)
 if (existsSync(envFile)) process.loadEnvFile(envFile)
@@ -31,5 +33,8 @@ export const LOOPBACK = Object.fromEntries(
 )
 
 export const KEY_DIR = new URL('./.keys/', import.meta.url)
-export const DATA_DIR = new URL('./.data/', import.meta.url)
+// AAUTH_DATA_DIR moves the state files, so a second world can run from the same checkout.
+export const DATA_DIR = process.env.AAUTH_DATA_DIR
+  ? pathToFileURL(`${resolve(process.env.AAUTH_DATA_DIR)}/`)
+  : new URL('./.data/', import.meta.url)
 

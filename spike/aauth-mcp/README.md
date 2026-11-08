@@ -2,6 +2,8 @@
 
 Alice keeps a list of links, each marked Everyone, Ask me or Only me. Bob's agent (Claude Code) proposes a mission to Bob's person server, and Bob approves it from a QR code on a phone signed in to that server. The agent then reaches Alice's MCP server through a stdio proxy, which signs every request with AAuth (draft-hardt-oauth-aauth-protocol-11) under that mission. Alice's server returns Everyone items at once. For Ask-me items it asks Alice while the call waits. Only-me items never appear. Each item the agent asks for needs its own scope, so it goes back through Bob's person server first.
 
+With `STORE_URL` set, the same server serves every member of the people network in `store/` instead of Alice's list ([The people network](#the-people-network)).
+
 It runs on one laptop, or on two laptops behind a Cloudflare Tunnel. No real accounts are used.
 
 ## Parties
@@ -69,6 +71,7 @@ The checks need no mission of their own. Each run proposes one and approves it a
 | `node client-check.mjs review_deny` | Same, and Bob denies | `403 denied`: Bob declined the request |
 | `node client-check.mjs remembered_deny` | Bob denies an item, then the agent asks again | The supervisor refuses the second request from the log, without asking Bob |
 | `npm run check:consent` | Bob must approve | The agent waits on a consent link and code; the script approves it after 2 seconds |
+| `npm run check:network` | The people network, with its own store and world (see [The people network](#the-people-network)) | `all 12 passed` |
 
 To run it from Claude Code, approve a mission (`npm run mission`), then write the MCP config for this checkout (`mcp.json` is gitignored):
 
@@ -83,6 +86,8 @@ claude -p "Use the alice server to see what Alice shares, then decide whether Bo
   --mcp-config mcp.json --strict-mcp-config \
   --allowedTools mcp__alice__get_context_schema,mcp__alice__search_context
 ```
+
+On the people network the tools are `find_people` and `search_context`, so allow `mcp__alice__find_people,mcp__alice__search_context` instead.
 
 `alice.json` seeds Alice's name and items. Her state is kept in `.data/alice-state.json`: rules, requesters, asks and the disclosure log. Delete `.data/` to start over.
 
@@ -125,6 +130,35 @@ The owner console (`console/`) calls these on Alice's server. Every call except 
 | `GET /api/events` | | Server-sent `changed` events carrying a revision number, and no state; refetch `/api/state` on each |
 
 An answer without `remember` holds for that requester's current mission only. Requester ids are derived from the person server and the pairwise `sub` it issues for Alice. The label comes from the `name` claim in the auth token. Each disclosure entry carries `prev` and `hash`, chaining it to the one before.
+
+## The people network
+
+With `STORE_URL` set, `alice.mjs` serves every member of the passkey store (`store/`) instead of `alice.json`. It reads members, items and rules through the store's `/internal` routes, with `STORE_INTERNAL_TOKEN` as the bearer. Asks, remembered answers, revocations and the disclosure log stay on the MCP server.
+
+| Tool | Arguments | Returns |
+|---|---|---|
+| `find_people` | `{query?}` | `{people: [{person, name, items: [{id, label, access}]}]}`, for members whose name or Everyone items match. `access` is `shared` or `ask`. No values, and never the caller |
+| `search_context` | `{person, ids?, query?, reason?}` | As with `alice.json`, for the member `person`, whose id the answer repeats |
+
+- Rules are the store's: each item's rule for everyone, or the rule its owner set for this caller. Only-me items never appear.
+- Item ids are the store's, and scopes name the owner, `item:<member id>/<item id>`, so Bob's supervisor judges each owner's items apart.
+- `MEMBER_MAP` says which member each person server speaks for, set once at setup: `{"<person server>": "<member id>"}`, or `{"<person server> <sub>": "<member id>"}` to tell apart several people on one person server. It is inline JSON or a file path. A file is read on every call, so it can change while the server runs. To find a member's id, sign in to the store as them and open `/auth/me`.
+- An unmapped person server gets `not_a_member` from both tools, and a person id the store does not know gets `unknown_person`. If the store does not answer, the call fails with `502 store_unavailable`.
+
+In this mode Alice's `/api` acts for one owner at a time:
+- A member signed in to the store sends the store's `sid` cookie, and the MCP server asks the store's `/auth/me` whose session it is. The cookie is host-only, so the console must reach `/api` through the store's origin. A post with a cookie must have a JSON body, or it gets `415`.
+- The console token with `x-owner: <member id>`, or `?owner=`, acts for that member. With neither, it acts for every owner.
+- `GET /api/state` returns that owner's `{requesters, asks, disclosures}`, plus `me` for a cookie, and every owner's for the token alone. Asks and disclosures carry `owner`, and an ask's `item_id` is `<member id>/<item id>`. There is no `owner` or `items`: items come from the store's `/me/items`.
+- Revoking a requester refuses it for this owner's items only, and leaves this owner out of its `find_people`.
+- `/api/items` answers `409`: items live in the store.
+
+To serve a running store:
+
+```bash
+STORE_URL=http://127.0.0.1:8790 STORE_INTERNAL_TOKEN=<the store's token> MEMBER_MAP=.keys/member-map.json npm run world
+```
+
+`npm run check:network` needs no world or store running. It starts a store with a temporary database on port 4690 and a world on 4601 to 4603 and 4611. It registers Alice, Bob and Carol with the store's software passkey, maps Bob's person server to Bob, and runs twelve cases as Bob's agent, with Alice and Carol answering at `/api`. Run `npm ci` in `store/` first.
 
 ## Behind Cloudflare
 
