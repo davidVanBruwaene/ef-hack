@@ -1,6 +1,6 @@
 # AAuth-protected MCP spike
 
-Alice keeps a list of links, each marked Everyone, Ask me or Only me. Bob's agent (Claude Code) proposes a mission to Bob's person server, and Bob approves it from a QR code on a phone signed in to that server. The agent then reaches Alice's MCP server through a stdio proxy, which signs every request with AAuth (draft-hardt-oauth-aauth-protocol-11) under that mission. Alice's server returns Everyone items at once. For Ask-me items it asks Alice while the call waits. Only-me items never appear. Each item the agent asks for needs its own scope, so it goes back through Bob's person server first.
+Alice keeps a list of links, each marked Everyone, Ask me or Only me. Bob's agent (Claude Code) proposes a mission to Bob's person server, and Bob approves it from a QR code on a phone signed in to that server. The agent then reaches Alice's MCP server through a stdio proxy, which signs every request with AAuth (draft-hardt-oauth-aauth-protocol-11) under that mission. Alice's server returns Everyone items at once. For Ask-me items it asks Alice while the call waits. Only-me items never appear. Each Ask-me item the agent asks for also needs its own scope, so the request goes back through Bob's person server first, where Bob's side can refuse it.
 
 With `STORE_URL` set, the same server serves every member of the people network in `store/` instead of Alice's list ([The people network](#the-people-network)).
 
@@ -57,7 +57,7 @@ The checks need no mission of their own. Each run proposes one and approves it a
 
 | Command | Case | Expected result |
 |---|---|---|
-| `npm run check` | All twelve cases below, under one fresh mission | `all 12 passed` |
+| `npm run check` | All thirteen cases below, in order, under one fresh mission | `all 13 passed` |
 | `node client-check.mjs everyone` | Two Everyone items | Both come back |
 | `node client-check.mjs ask` | An Ask-me item | The call waits; the script answers as Alice (approve) through `/api`; the item comes back |
 | `node client-check.mjs deny` | An Ask-me item | Same, but Alice denies; the item is `declined` |
@@ -67,11 +67,12 @@ The checks need no mission of their own. Each run proposes one and approves it a
 | `node client-check.mjs unapproved` | The proxy names a mission Bob never approved | `400 invalid_request`, the same answer as for another agent's mission (§8.7) |
 | `node client-check.mjs mission_denied` | Bob denies a proposed mission | The proposal ends in `403 denied` |
 | `node client-check.mjs self_approval` | The agent posts its own approval with the code it was given | `401`; the proposal stays pending until Bob denies it |
-| `node client-check.mjs review_allow` | An item the mission text does not mention | The supervisor holds it; Bob's page shows the agent's reason; Bob allows; the item comes back |
-| `node client-check.mjs review_deny` | Same, and Bob denies | `403 denied`: Bob declined the request |
-| `node client-check.mjs remembered_deny` | Bob denies an item, then the agent asks again | The supervisor refuses the second request from the log, without asking Bob |
+| `node client-check.mjs review_allow` | An Ask-me item the mission text does not mention | The supervisor holds it; Bob's page shows the agent's reason; Bob allows, then Alice; the item comes back |
+| `node client-check.mjs review_deny` | Same, and Bob denies | The item is `refused` and Alice is never asked; `refused_why` says Bob declined it |
+| `node client-check.mjs remembered_deny` | Bob denies an item, then the agent asks again | The supervisor refuses the second call from the log, without asking Bob; `refused_why` cites the earlier denial |
+| `node client-check.mjs ask remembered_deny partial` | One call for an item allowed earlier in the mission and one refused earlier | The first comes back and the second is `refused`, in one answer |
 | `npm run check:consent` | Bob must approve | The agent waits on a consent link and code; the script approves it after 2 seconds |
-| `npm run check:network` | The people network, with its own store and world (see [The people network](#the-people-network)) | `all 12 passed` |
+| `npm run check:network` | The people network, with its own store and world (see [The people network](#the-people-network)) | `all 13 passed` |
 
 To run it from Claude Code, approve a mission (`npm run mission`), then write the MCP config for this checkout (`mcp.json` is gitignored):
 
@@ -106,12 +107,14 @@ Every call needs `Authorization: Bearer <token>`, where the token is `BOB_CONSOL
 
 On each auth token request, the front judges every scope the agent does not already hold:
 - `context`, access to Alice's server itself, is allowed when the approved blob lists the resource, and held for Bob otherwise.
-- Each `item:<id>` goes to `decide({mission, act, log})`.
+- Each `item:<id>` goes to `decide({mission, act, log})`. Only Ask-me items have scopes, so Everyone items never reach it.
   - `mission` is `{s256, status, blob_b64}`.
   - `act` is `{type: "token_request", agent, resource, scope, justification?}`. The justification is the `reason` of the tool call, which the proxy sends, as -11 allows, in the token request.
   - `log` is this mission's earlier decisions and Bob's answers, oldest first.
 
 Any DENY refuses the request with `403 denied`. Any REVIEW holds the auth token that mockin minted and answers `202`. The request then appears on Bob's page with the agent's reason, until Bob answers. Otherwise the token goes straight to the agent.
+
+A refusal's detail names the refused scopes in brackets, says why, and quotes the mission Bob approved. When Bob denies a held request on his page, every scope held with it is refused. The proxy then asks Alice's server again, up to three times, with the refused scopes in `x-refused-scopes`. Alice's server stops requiring them and reports their items as `refused`, so the call answers with the rest. The proxy adds the refusal's detail to the tool result as `refused_why`. That text calls Jev "Bob's supervisor model". Alice's server never sees it and learns only the scope names.
 
 `decide()` is `supervisor/decide.mjs` (see [supervisor/README.md](../../supervisor/README.md)). Its fixed rules go first. One of them repeats an earlier answer for the same scope, so Bob is not asked twice. Whatever the rules leave open goes to Jev through OpenRouter, and anything Jev is unsure of, or cannot answer, is held for Bob. When Bob approves a mission he can tick "Rules only". Nothing under that mission then goes to Jev, and whatever the rules leave open is held for him. The checks approve their missions that way, so their results never depend on the model.
 
@@ -141,7 +144,7 @@ With `STORE_URL` set, `alice.mjs` serves every member of the passkey store (`sto
 | `search_context` | `{person, ids?, query?, reason?}` | As with `alice.json`, for the member `person`, whose id the answer repeats |
 
 - Rules are the store's: each item's rule for everyone, or the rule its owner set for this caller. Only-me items never appear.
-- Item ids are the store's, and scopes name the owner, `item:<member id>/<item id>`, so Bob's supervisor judges each owner's items apart.
+- Item ids are the store's. Scopes name the owner readably, `item:<name>-<hex>/<item id>`: `<name>` is the owner's name in lowercase with hyphens, and `<hex>` is the first six hex digits of the member id. Bob's page shows whose item each scope is, and his supervisor judges each owner's items apart.
 - `MEMBER_MAP` says which member each person server speaks for, set once at setup: `{"<person server>": "<member id>"}`, or `{"<person server> <sub>": "<member id>"}` to tell apart several people on one person server. It is inline JSON or a file path. A file is read on every call, so it can change while the server runs. To find a member's id, sign in to the store as them and open `/auth/me`.
 - An unmapped person server gets `not_a_member` from both tools, and a person id the store does not know gets `unknown_person`. If the store does not answer, the call fails with `502 store_unavailable`.
 
@@ -158,7 +161,7 @@ To serve a running store:
 STORE_URL=http://127.0.0.1:8790 STORE_INTERNAL_TOKEN=<the store's token> MEMBER_MAP=.keys/member-map.json npm run world
 ```
 
-`npm run check:network` needs no world or store running. It starts a store with a temporary database on port 4690 and a world on 4601 to 4603 and 4611. It registers Alice, Bob and Carol with the store's software passkey, maps Bob's person server to Bob, and runs twelve cases as Bob's agent, with Alice and Carol answering at `/api`. Run `npm ci` in `store/` first.
+`npm run check:network` needs no world or store running. It starts a store with a temporary database on port 4690 and a world on 4601 to 4603 and 4611. It registers Alice, Bob and Carol with the store's software passkey, maps Bob's person server to Bob, and runs thirteen cases as Bob's agent, with Alice and Carol answering at `/api`. Run `npm ci` in `store/` first.
 
 ## Behind Cloudflare
 
@@ -221,15 +224,15 @@ The tunnel passes the public hostname through as the `Host` header, and the HTTP
 2. The proxy signs a request with an agent token. Alice's server answers `401 requirement=person-token`.
 3. The proxy asks Bob's person server for a person token naming `mission_s256`. The person server issues one only under a mission Bob approved for this agent, and only before it expires. Alice's server refuses a revoked requester with `403`. Otherwise it issues a resource token for scope `context` and answers `401 requirement=auth-token`.
 4. The proxy exchanges the resource token at Bob's person server for an auth token that carries the same mission. Alice's server verifies it and serves MCP: `get_context_schema` lists the items Bob may request.
-5. `search_context` names items. If the auth token lacks `item:<id>` for any of them, Alice's server issues a new resource token with the wider scope and answers `401 requirement=auth-token`. The proxy steps up at Bob's person server, presenting its current auth token, and retries.
-6. Everyone items come back. Ask-me items raise an ask in Alice's console and the call waits for her answer. Only-me items are reported as `not_found`. Each call is appended to the disclosure log.
+5. `search_context` names items. If the auth token lacks `item:<id>` for any Ask-me item among them, Alice's server issues a new resource token with the wider scope and answers `401 requirement=auth-token`. The proxy steps up at Bob's person server, presenting its current auth token, and retries. If Bob's side refuses some of those scopes, the proxy asks again without them.
+6. Everyone items come back. Ask-me items raise an ask in Alice's console and the call waits for her answer. Only-me items are reported as `not_found`. The answer sorts the items it names into `shared`, `pending` (Alice has not answered yet), `declined` (Alice said no), `refused` (Bob's side refused the scope, so Alice was never asked) and `not_found`, and `note` says the same in words. Each call is appended to the disclosure log.
 
 ## Limits
 
 - **Missions.** The front implements mission creation and approval (§8.1, §8.2) and keeps a log. It returns no `person_tokens` in the approval response, since minting them needs a request the agent signed, and it offers no clarification chat. Missions last 24 hours. mockin itself still accepts any mission hash; the front is what checks it.
 - **Bob's sign-in.** Bob is a browser that opened a `/pair` link, or a script holding his console token. When Bob's agent runs on the laptop that also runs his person server, it can read `.keys/bob-console-token`, and so answer for Bob. A person server on its own host closes that.
 - **Who is asking.** Alice's server knows a requester only as a person server plus a pairwise `sub`, labelled with the name that server puts in the auth token. Nothing proves that name.
-- **Reasons.** The `reason` Alice sees is the agent's own claim. Bob's mission text stays at Bob's person server.
+- **Reasons.** The `reason` Alice sees is the agent's own claim. Alice's server never sees Bob's mission text.
 - **Consent.** mockin approves automatically unless `check:consent` or `npm run world:consent` turns approval on. Its consent link resolves only where Bob's person server is reachable: this machine, or anywhere once tunnelled.
 - **Agent identity.** mockin's auth token names the agent's key (`cnf`), not the agent itself. To fill the gap, `alice.mjs` records which agent signed with each key.
 - **Protocol coverage.** `@aauth/*` supports neither four-party mode (a separate access server) nor call chaining, so neither is here.

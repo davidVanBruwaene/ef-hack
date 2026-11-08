@@ -29,7 +29,43 @@ const withReason = inner => async (url, init) => {
   try { return await inner(url, init) } finally { reason = undefined }
 }
 
-const aauthFetch = serializeAuthFlows(withReason(createAAuthFetch({
+// Bob's person server refuses a whole token request over any one item; the detail lists the item scopes it refused in brackets.
+const REFUSED = /\[((?:item:[^\s\]]+ ?)+)\]/
+const withHeader = (headers, name, value) => { const h = new Headers(headers); h.set(name, value); return h }
+
+// The reason quotes Bob's mission, so it goes into the tool result here and never to Alice's server, which learns only the scopes.
+async function addReasons(res, reasons) {
+  if (!res.ok || !(res.headers.get('content-type') ?? '').includes('application/json')) return res
+  const body = await res.json()
+  for (const msg of Array.isArray(body) ? body : [body]) {
+    const part = msg?.result?.content?.find?.(c => c.type === 'text')
+    if (!part) continue
+    try { part.text = JSON.stringify({ ...JSON.parse(part.text), refused_why: reasons.join(' ') }, null, 2) } catch { part.text += `\n${reasons.join(' ')}` }
+  }
+  const headers = new Headers(res.headers)
+  headers.delete('content-length')
+  headers.delete('content-encoding')
+  return new Response(JSON.stringify(body), { status: res.status, headers })
+}
+
+// Asks again without the items Bob's side refused, so the call answers with the rest instead of failing.
+const withRefusals = inner => async (url, init) => {
+  const refused = [], reasons = []
+  for (;;) {
+    try {
+      const res = await inner(url, refused.length ? { ...init, headers: withHeader(init.headers, 'x-refused-scopes', refused.join(' ')) } : init)
+      return reasons.length ? addReasons(res, reasons) : res
+    } catch (err) {
+      const named = init?.method === 'POST' && err?.error === 'denied' ? REFUSED.exec(err.detail ?? '')?.[1].trim().split(' ') ?? [] : []
+      if (!named.length || named.some(s => refused.includes(s)) || reasons.length >= 3) throw err
+      say(`${PS} refused [${named.join(' ')}]; asking again without them`)
+      refused.push(...named)
+      reasons.push(err.detail)
+    }
+  }
+}
+
+const aauthFetch = serializeAuthFlows(withRefusals(withReason(createAAuthFetch({
   getKeyMaterial,
   personServerUrl: PS,
   justification,
@@ -40,7 +76,7 @@ const aauthFetch = serializeAuthFlows(withReason(createAAuthFetch({
     say(`consent needed: open ${url}?code=${code}${local}`)
   },
   ...(process.env.AAUTH_DEBUG ? { onEvent: e => say(JSON.stringify(e).slice(0, 300)) } : {}),
-})))
+}))))
 
 say(`agent ${AGENT_SUB} → ${RESOURCE}/mcp, mission ${mission ? `${mission.s256.slice(0, 8)}…` : '(none: run npm run mission first)'}`)
 const remote = new StreamableHTTPClientTransport(new URL(`${RESOURCE}/mcp`), { fetch: aauthFetch })
