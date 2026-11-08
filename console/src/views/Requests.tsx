@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { CheckIcon, InboxIcon, LinkIcon, QuoteIcon } from 'lucide-react'
-import { toast } from 'sonner'
 import { api } from '@/api'
-import type { Ask, State } from '@/types'
+import type { State } from '@/types'
+import type { Group } from '@/lib/groups'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,41 +11,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { groupKey, initials, plural } from '@/lib/format'
-
-interface Group {
-  key: string
-  label: string
-  agent: string
-  reason: string
-  asks: Ask[]
-}
+import { initials, plural } from '@/lib/format'
 
 interface Props {
   state: State
+  groups: Group[]
   refresh: () => void
   focus: string | null
-  setFocus: (key: string | null) => void
 }
 
-export function Requests({ state, refresh, focus, setFocus }: Props) {
-  const groups = useMemo<Group[]>(() => {
-    const map = new Map<string, Group>()
-    for (const a of state.asks.filter((x) => x.status === 'pending')) {
-      const key = groupKey(a.requester, a.mission_s256)
-      const g = map.get(key) ?? {
-        key,
-        label: state.requesters.find((r) => r.id === a.requester)?.label ?? a.requester,
-        agent: a.agent,
-        reason: a.reason,
-        asks: [],
-      }
-      g.asks.push(a)
-      map.set(key, g)
-    }
-    return [...map.values()]
-  }, [state])
-
+export function Requests({ state, groups, refresh, focus }: Props) {
   const group = groups.find((g) => g.key === focus) ?? groups[0]
 
   if (!group) {
@@ -57,7 +33,7 @@ export function Requests({ state, refresh, focus, setFocus }: Props) {
             </div>
             <div className="text-base font-semibold">Nothing waiting</div>
             <p className="max-w-sm text-sm text-muted-foreground">
-              When someone's agent asks for something you keep behind "Ask me", it appears here and in a notification at the top right.
+              When someone's agent asks for something you keep behind "Ask me", it appears here and in the bell at the top right.
             </p>
           </CardContent>
         </Card>
@@ -65,23 +41,14 @@ export function Requests({ state, refresh, focus, setFocus }: Props) {
     )
   }
 
-  return (
-    <RequestCard
-      key={group.key}
-      group={group}
-      state={state}
-      others={groups.filter((g) => g.key !== group.key)}
-      onPick={setFocus}
-      refresh={refresh}
-    />
-  )
+  return <RequestCard key={group.key} group={group} state={state} refresh={refresh} />
 }
 
-function RequestCard(props: { group: Group; state: State; others: Group[]; onPick: (key: string) => void; refresh: () => void }) {
-  const { group, state } = props
+function RequestCard({ group, state, refresh }: { group: Group; state: State; refresh: () => void }) {
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(group.asks.map((a) => [a.id, true])))
   const [remember, setRemember] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const count = group.asks.filter((a) => on[a.id]).length
   const everyone = state.items.filter((i) => i.rule === 'everyone')
@@ -89,13 +56,12 @@ function RequestCard(props: { group: Group; state: State; others: Group[]; onPic
 
   async function decide(share: boolean) {
     setBusy(true)
+    setError(null)
     try {
       for (const a of group.asks) await api.decideAsk(a.id, share && on[a.id] ? 'approve' : 'deny', remember)
-      if (share && count > 0) toast.success(`Shared ${plural(count, 'item')} with ${group.label}`)
-      else toast(`Denied ${group.label}'s request`)
-      props.refresh()
+      refresh()
     } catch (e) {
-      toast.error((e as Error).message)
+      setError((e as Error).message)
     } finally {
       setBusy(false)
     }
@@ -168,30 +134,10 @@ function RequestCard(props: { group: Group; state: State; others: Group[]; onPic
           </div>
         </div>
 
-        {props.others.length > 0 ? (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Also waiting</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              <ul className="divide-y">
-                {props.others.map((o) => (
-                  <li key={o.key}>
-                    <button
-                      onClick={() => props.onPick(o.key)}
-                      className="flex min-h-11 w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
-                    >
-                      <Avatar size="sm">
-                        <AvatarFallback>{initials(o.label)}</AvatarFallback>
-                      </Avatar>
-                      <span className="flex-1 text-sm font-medium">{o.label}</span>
-                      <Badge variant="secondary">{plural(o.asks.length, 'item')}</Badge>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
+        {error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         ) : null}
       </main>
 

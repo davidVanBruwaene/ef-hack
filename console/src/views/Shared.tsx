@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { GlobeIcon, PlusIcon } from 'lucide-react'
-import { toast } from 'sonner'
 import { api } from '@/api'
 import type { Rule, State } from '@/types'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -18,19 +18,25 @@ const RULES: { id: Rule; name: string }[] = [
 export function Shared({ state, refresh }: { state: State; refresh: () => void }) {
   const [label, setLabel] = useState('')
   const [url, setUrl] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
-  async function guard(fn: () => Promise<void>, ok?: string) {
+  async function guard(fn: () => Promise<void>) {
+    setError(null)
     try {
       await fn()
-      if (ok) toast.success(ok)
       refresh()
     } catch (e) {
-      toast.error((e as Error).message)
+      setError((e as Error).message)
     }
   }
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6">
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">What you share</CardTitle>
@@ -84,7 +90,7 @@ export function Shared({ state, refresh }: { state: State; refresh: () => void }
                 await api.addLink(label.trim(), url.trim())
                 setLabel('')
                 setUrl('')
-              }, 'Link added')
+              })
             }}
           >
             <div className="grid gap-4 sm:grid-cols-2">

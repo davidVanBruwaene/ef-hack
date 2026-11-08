@@ -1,29 +1,36 @@
 import { BanIcon, RotateCcwIcon } from 'lucide-react'
-import { toast } from 'sonner'
+import { useState } from 'react'
 import { api } from '@/api'
 import type { State } from '@/types'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { initials, timeAgo } from '@/lib/format'
 
 export function Activity({ state, refresh }: { state: State; refresh: () => void }) {
+  const [error, setError] = useState<string | null>(null)
   const name = (id: string) => state.requesters.find((r) => r.id === id)?.label ?? id
   const label = (id: string) => state.items.find((i) => i.id === id)?.label ?? id
 
-  async function setStatus(id: string, who: string, status: 'active' | 'revoked') {
+  async function setStatus(id: string, status: 'active' | 'revoked') {
+    setError(null)
     try {
       await api.setRequester(id, status)
-      toast(status === 'revoked' ? `Revoked ${who}'s access` : `Restored ${who}'s access`)
       refresh()
     } catch (e) {
-      toast.error((e as Error).message)
+      setError((e as Error).message)
     }
   }
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6">
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">People with access</CardTitle>
@@ -43,12 +50,12 @@ export function Activity({ state, refresh }: { state: State; refresh: () => void
                 </div>
                 <Badge variant={r.status === 'active' ? 'secondary' : 'outline'}>{r.status === 'active' ? 'Active' : 'Revoked'}</Badge>
                 {r.status === 'active' ? (
-                  <Button variant="outline" size="sm" className="text-destructive" onClick={() => setStatus(r.id, r.label, 'revoked')}>
+                  <Button variant="outline" size="sm" className="text-destructive" onClick={() => setStatus(r.id, 'revoked')}>
                     <BanIcon className="size-3.5" />
                     Revoke
                   </Button>
                 ) : (
-                  <Button variant="outline" size="sm" onClick={() => setStatus(r.id, r.label, 'active')}>
+                  <Button variant="outline" size="sm" onClick={() => setStatus(r.id, 'active')}>
                     <RotateCcwIcon className="size-3.5" />
                     Restore
                   </Button>
