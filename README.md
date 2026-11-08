@@ -44,6 +44,30 @@ Behind the tunnel, Alice and Bob use the same console. Build it with `VITE_API=l
 
 On two laptops, run `npm run bob` on one and `npm run alice` on the other, behind a Cloudflare Tunnel. The spike README covers the setup.
 
+**The two-person demo on one laptop.** Bob's agent, Claude Code, finds another member of the people network and asks for what they share. Bob answers for his agent on his phone, and the other member answers in the console on theirs. Once per laptop:
+
+1. Run `npm ci` in `store/` and `console/`, and `npm ci --ignore-scripts` in `spike/aauth-mcp`.
+2. Create both tunnels and write both configs on this laptop, as in "Once per laptop" in [spike/aauth-mcp/two-laptops.md](spike/aauth-mcp/two-laptops.md). Alice's takes `--console 4531 --store 8790`, or `CONSOLE_PORT` and `STORE_PORT` if you set them.
+3. In `.env` at the repo root, set `AAUTH_PS`, `AAUTH_AGENT` and `AAUTH_RESOURCE` to the tunnel hostnames, `RP_ID` to the console's hostname, `BOB_NAME` to Bob's first name, and `TUNNEL_CONFIGS` to the two config files.
+
+Each run, in `spike/aauth-mcp`:
+
+```bash
+npm run demo       # builds the console, then runs the store, the world, the console server and both tunnels; leave it running
+```
+
+Each person opens `https://<RP_ID>/` on their phone and creates an account with a passkey, once. Then, in a second terminal in `spike/aauth-mcp`:
+
+```bash
+npm run member-map -- <Bob's first name>           # once, after Bob's account exists
+npm run pair                                        # Bob scans it, and that phone browser answers for his agent
+npm run mission -- "<what Bob's agent should do>"   # Bob approves it in the same phone browser
+npm run mcp-config
+claude --mcp-config mcp.json --strict-mcp-config --allowedTools mcp__alice__find_people,mcp__alice__search_context
+```
+
+Requests that Bob's supervisor holds wait for him at `/bob` on his person server, in that browser. The other member answers asks in the console, under Requests.
+
 Keep this section current: anyone should be able to run main from a fresh clone.
 
 ## Who owns what
