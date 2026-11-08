@@ -1,6 +1,6 @@
 # Two laptops behind named Cloudflare tunnels
 
-Bob's laptop runs `npm run bob`, which starts Bob's person server and agent provider, and it runs Claude Code. Alice's laptop runs `npm run alice`, which starts Alice's server, and her console. Each laptop runs one named tunnel. The other laptop and the phones reach it through Cloudflare, so neither laptop needs an inbound connection or a shared network. All commands below run in `spike/aauth-mcp`.
+Bob's laptop runs `npm run bob`, which starts Bob's person server and agent provider, and it runs Claude Code. Alice's laptop runs `npm run alice`, which starts Alice's server, and Alice's console. Each laptop runs one named tunnel. The other laptop and the phones reach it through Cloudflare, so neither laptop needs an inbound connection or a shared network. All commands below run in `spike/aauth-mcp`.
 
 ## The names
 
