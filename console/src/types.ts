@@ -45,4 +45,6 @@ export interface State {
   requesters: Requester[]
   asks: Ask[]
   disclosures: Disclosure[]
+  // Set by the console, never by a server: which part of the state could not be loaded.
+  notice?: string
 }

@@ -1,4 +1,4 @@
-// Alice's state: her items and their rules, the requesters, the asks waiting on her, and the disclosure log.
+// The MCP server's state: Alice's items from alice.json, the requesters, the asks waiting on Alice or on network members, and the disclosure log.
 import { readFileSync } from 'node:fs'
 import { bearerToken, jsonFile, now, randomId, sha256 } from './store.mjs'
 
@@ -39,20 +39,23 @@ export function openState(seedUrl) {
   // Only-me items, and items Alice said no to for good, do not exist for that requester.
   const hidden = (rid, item) => item.rule === 'only_me' || remembered(rid, item.id) === 'deny'
   const shared = (rid, item) => item.rule === 'everyone' || remembered(rid, item.id) === 'approve'
+  const revokedBy = (rid, owner) => !!requester(rid)?.revoked_by?.includes(owner)
+  // A network item's id is "<owner>/<item>" so asks and remembered answers stay per owner; the agent names it by item_id.
+  const key = item => item.item_id ?? item.id
 
-  function resolve(rid, { ids, query } = {}) {
+  function resolve(rid, { ids, query } = {}, all = s.items) {
     const items = new Map(), hiddenIds = new Set(), unknown = []
-    const add = item => (hidden(rid, item) ? hiddenIds.add(item.id) : items.set(item.id, item))
+    const add = item => (hidden(rid, item) ? hiddenIds.add(key(item)) : items.set(item.id, item))
     for (const id of Array.isArray(ids) ? ids.filter(i => typeof i === 'string') : []) {
-      const item = s.items.find(i => i.id === id)
+      const item = all.find(i => key(i) === id)
       item ? add(item) : unknown.push(id)
     }
     const words = (typeof query === 'string' ? query : '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length > 1)
-    for (const item of s.items) {
-      const text = `${item.id} ${item.label}`.toLowerCase()
+    for (const item of all) {
+      const text = `${key(item)} ${item.label}`.toLowerCase()
       if (words.some(w => text.includes(w))) add(item)
     }
-    if (!(Array.isArray(ids) && ids.length) && !words.length) for (const item of s.items) if (shared(rid, item)) items.set(item.id, item)
+    if (!(Array.isArray(ids) && ids.length) && !words.length) for (const item of all) if (shared(rid, item)) items.set(item.id, item)
     return { items: [...items.values()], hidden: [...hiddenIds], unknown }
   }
 
@@ -64,7 +67,8 @@ export function openState(seedUrl) {
     if (!ask) {
       ask = {
         id: randomId('ask'),
-        requester: rid, agent, mission_s256: mission, item_id: item.id, reason: reason ?? '',
+        requester: rid, agent, mission_s256: mission, item_id: item.id, item_label: item.label, reason: reason ?? '',
+        ...(item.owner ? { owner: item.owner } : {}),
         status: 'pending', created_at: now(),
       }
       s.asks.push(ask)
@@ -112,29 +116,33 @@ export function openState(seedUrl) {
     rev: () => rev,
     onChange(cb) { listeners.add(cb); return () => listeners.delete(cb) },
     requester,
-    visible: rid => s.items.filter(i => !hidden(rid, i)),
+    visible: (rid, all = s.items) => all.filter(i => !hidden(rid, i)),
     shared,
+    hidden,
+    revokedBy,
     resolve,
     decision,
     waitDecided,
     disclose,
 
-    seen({ id, ps, sub, label, agent }) {
+    seen({ id, ps, sub, label, agent, member }) {
       let r = requester(id)
       if (!r) {
-        r = { id, label: label ?? 'Unknown', status: 'active', ps, sub, agent, first_seen: now(), remembered: {} }
+        r = { id, label: label ?? 'Unknown', status: 'active', ps, sub, agent, ...(member ? { member } : {}), first_seen: now(), remembered: {} }
         s.requesters.push(r)
         changed()
-      } else if ((agent && r.agent !== agent) || (label && r.label === 'Unknown')) {
+      } else if ((agent && r.agent !== agent) || (label && r.label === 'Unknown') || (member && r.member !== member)) {
         if (agent) r.agent = agent
         if (label && r.label === 'Unknown') r.label = label
+        if (member) r.member = member
         changed()
       }
       return r
     },
 
-    decideAsks(decisions) {
-      const asks = decisions.map(d => ({ d, ask: s.asks.find(a => a.id === d.id) }))
+    // With an owner, only that owner's asks can be answered; any other id counts as missing.
+    decideAsks(decisions, owner) {
+      const asks = decisions.map(d => ({ d, ask: s.asks.find(a => a.id === d.id && (owner === undefined || a.owner === owner)) }))
       const missing = asks.filter(a => !a.ask).map(a => a.d.id)
       if (missing.length) return { missing }
       for (const { d, ask } of asks) applyDecision(ask, d.decision, !!d.remember)
@@ -142,13 +150,19 @@ export function openState(seedUrl) {
       return { missing }
     },
 
-    setRequester(id, { status, label }) {
+    // With an owner, revocation is that owner's alone: it lands in revoked_by and denies only their pending asks.
+    setRequester(id, { status, label }, owner) {
       const r = requester(id)
       if (!r) return false
-      if (status) r.status = status
+      if (status && owner !== undefined) {
+        const others = (r.revoked_by ?? []).filter(o => o !== owner)
+        r.revoked_by = status === 'revoked' ? [...others, owner] : others
+      } else if (status) r.status = status
       if (label) r.label = label
       if (status === 'revoked') {
-        for (const a of s.asks) if (a.requester === id && a.status === 'pending') applyDecision(a, 'deny', false, 'revoked')
+        for (const a of s.asks) {
+          if (a.requester === id && a.status === 'pending' && (owner === undefined || a.owner === owner)) applyDecision(a, 'deny', false, 'revoked')
+        }
       }
       changed()
       return true
@@ -171,12 +185,22 @@ export function openState(seedUrl) {
       return item
     },
 
-    view: () => ({
-      owner: s.owner,
-      items: s.items,
-      requesters: s.requesters,
-      asks: [...s.asks].reverse(),
-      disclosures: [...s.disclosures].reverse(),
-    }),
+    // With an owner: that owner's asks and disclosures, and the requesters they involve, with their status for this owner only.
+    view(owner) {
+      if (owner === undefined) {
+        return { owner: s.owner, items: s.items, requesters: s.requesters, asks: [...s.asks].reverse(), disclosures: [...s.disclosures].reverse() }
+      }
+      const asks = s.asks.filter(a => a.owner === owner)
+      const disclosures = s.disclosures.filter(d => d.owner === owner)
+      const involved = new Set([...asks.map(a => a.requester), ...disclosures.map(d => d.requester)])
+      const requesters = s.requesters
+        .filter(r => involved.has(r.id) || r.revoked_by?.includes(owner))
+        .map(({ revoked_by, remembered, ...r }) => ({
+          ...r,
+          status: revoked_by?.includes(owner) ? 'revoked' : 'active',
+          remembered: Object.fromEntries(Object.entries(remembered ?? {}).filter(([k]) => k.startsWith(`${owner}/`))),
+        }))
+      return { requesters, asks: [...asks].reverse(), disclosures: [...disclosures].reverse() }
+    },
   }
 }
