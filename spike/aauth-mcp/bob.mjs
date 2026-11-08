@@ -72,6 +72,16 @@ const unsigned = (res, who) => problem(res, 401, who.error, who.detail, {}, {
 const noSuchMission = res => problem(res, 400, 'invalid_request', 'mission_s256 names no mission of this agent')
 const terminated = res => problem(res, 403, 'mission_terminated', undefined, { mission_status: 'terminated', termination_reason: 'expired' })
 const claimsOf = jwt => { try { return decodeJwt(jwt) } catch { return {} } }
+const hostOf = url => { try { return new URL(url).hostname } catch { return 'the resource' } }
+
+// Agents read refusals as the resource's, and Jev as a person: name Bob's side and the mission. The bracketed scopes are what the proxy asks again without.
+function refusal(m, resource, scopes, why) {
+  const text = state.blob(m)?.description ?? ''
+  return `${BOB_NAME}'s own person server refused [${scopes.join(' ')}], so ${hostOf(resource)} was not asked. ${why} The mission ${BOB_NAME} approved: "${text.length > 300 ? `${text.slice(0, 300)}…` : text}"`
+}
+const forAgent = v => (v.by === 'jev'
+  ? `${v.scope}: ${BOB_NAME}'s supervisor model judged it outside the mission${v.p != null ? ` (p ${v.p.toFixed(2)})` : ''}.`
+  : `${v.scope}: ${v.reason.replace(/\bJev\b/g, `${BOB_NAME}'s supervisor model`)}`)
 
 // Auth tokens mockin minted for requests Bob is still reviewing; memory only, never written to disk.
 const heldTokens = new Map()
@@ -284,8 +294,8 @@ async function authToken(req, res, url, raw) {
   const { decision, verdicts } = await supervise(m, who.agent, rt.iss, fresh, justification)
   log(`supervisor on [${fresh.join(' ')}] under mission ${short(m.s256)}${justification ? ` ("${justification}")` : ''}: ${verdicts.map(v => `${v.scope} ${v.decision} (${v.rule ?? v.by}: ${v.reason})`).join('; ') || 'nothing new'} → ${decision}`)
   if (decision === 'DENY') {
-    const why = verdicts.filter(v => v.decision === 'DENY').map(v => `${v.scope}: ${v.reason}`).join('; ')
-    return problem(res, 403, 'denied', `${BOB_NAME}'s supervisor refused ${why}`)
+    const denied = verdicts.filter(v => v.decision === 'DENY')
+    return problem(res, 403, 'denied', refusal(m, rt.iss, denied.map(v => v.scope), denied.map(forAgent).join(' ')))
   }
   const up = await forward(req, raw, PORTS.mockin)
   if (decision === 'ALLOW' || up.status !== 200) return relay(res, up)
@@ -307,7 +317,9 @@ async function pollReview(req, res, url, raw, id) {
   }
   const up = heldTokens.get(id)
   heldTokens.delete(id)
-  if (r.status === 'denied') return problem(res, 403, 'denied', `${BOB_NAME} declined the request`)
+  if (r.status === 'denied') {
+    return problem(res, 403, 'denied', refusal(state.mission(r.mission), r.resource, r.scopes, `${BOB_NAME} declined the request on ${BOB_NAME}'s own page.`))
+  }
   if (!up) return problem(res, 408, 'expired', 'the held auth token is gone; request access again')
   relay(res, up)
 }

@@ -132,14 +132,16 @@ const formPost = body => ({
   method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...asBob }, body: new URLSearchParams(body).toString(),
 })
 
-// Stands in for Bob allowing every item scope his supervisor holds under this run's mission.
+// Stands in for Bob answering what his supervisor holds under this run's mission: deny when a scope ends in one of these, else allow.
+const bobDenies = new Set()
 function bobAllows(s256) {
   let running = true
   const loop = (async () => {
     while (running) {
       const res = await fetch(`${BOB_API}/state`, { headers: asBob })
       for (const r of (await res.json()).reviews.filter(r => r.mission_s256 === s256 && r.status === 'pending')) {
-        await open(`${PS}/interact`, formPost({ code: r.code, decision: 'approve' }))
+        const deny = r.scopes.some(sc => [...bobDenies].some(end => sc.endsWith(end)))
+        await open(`${PS}/interact`, formPost({ code: r.code, decision: deny ? 'deny' : 'approve' }))
       }
       await sleep(250)
     }
@@ -266,6 +268,23 @@ const CASES = {
     })
   },
 
+  async refused() {
+    bobDenies.add('/phone')
+    try {
+      return await agent(async tool => {
+        const r = await tool('search_context', { person: carol.id, ids: ['site', 'phone'], reason: 'To call Carol about the meetup.' })
+        const view = (await ownerApi(carol, '/state')).json
+        check(r.shared.site && r.refused.includes('phone') && !r.shared.phone, `shared ${JSON.stringify(r.shared)}, refused [${r.refused}]`)
+        check(/declined the request/.test(r.refused_why ?? ''), `refused_why: ${r.refused_why}`)
+        check(!view.asks.some(a => a.item_id === `${carol.id}/phone`), 'Carol was asked about an item Bob refused')
+        check(!JSON.stringify(view).includes('hackathon'), "Bob's mission text reached Carol's side")
+        return "Bob declined phone: site still came back, phone came back as refused with Bob's reason, and Carol saw neither the ask nor the mission"
+      })
+    } finally {
+      bobDenies.delete('/phone')
+    }
+  },
+
   async console_auth() {
     const none = await fetch(`${ALICE_API}/state`)
     const bogus = await ownerApi({ cookie: () => 'sid=not-a-session' }, '/state')
@@ -359,7 +378,11 @@ const alice = await signUp('Alice', 'Martin', [
   ['Home address', 'https://maps.example.org/alice-home', 'only_me'],
 ])
 const bob = await signUp('Bob', 'Okafor', [['Personal site', 'https://bob.example.org', 'everyone']])
-const carol = await signUp('Carol', 'Nguyen', [['Site', 'https://carol.example.org', 'everyone'], ['Calendar', 'https://cal.example.org/carol', 'ask']])
+const carol = await signUp('Carol', 'Nguyen', [
+  ['Site', 'https://carol.example.org', 'everyone'],
+  ['Calendar', 'https://cal.example.org/carol', 'ask'],
+  ['Phone', 'tel:+15550100', 'ask'],
+])
 writeFileSync(MAP, JSON.stringify({ [PS]: bob.id }))
 
 const world = run('world', ['world.mjs'], HERE, process.env)

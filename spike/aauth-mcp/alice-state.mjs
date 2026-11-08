@@ -11,7 +11,7 @@ export const requesterId = (ps, sub) => `r_${sha256(`${ps} ${sub}`).slice(0, 16)
 // Bearer token for Alice's /api: ALICE_CONSOLE_TOKEN, or one generated into .keys/alice-console-token.
 export const consoleToken = () => bearerToken('ALICE_CONSOLE_TOKEN', 'alice-console-token')
 
-const slug = label => label.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'link'
+export const slug = label => label.toLowerCase().normalize('NFKD').replace(/\p{M}/gu, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'link'
 
 export function openState(seedUrl) {
   const seed = JSON.parse(readFileSync(seedUrl, 'utf8'))

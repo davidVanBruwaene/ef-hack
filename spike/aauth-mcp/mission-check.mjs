@@ -359,14 +359,14 @@ const CASES = {
 
   allow: async t => {
     const m = await missionFor('allow')
-    const first = await askFor(m, ['site'])
-    if (!held(t, first, 'the first request for site')) return `${first.status}`
+    const first = await askFor(m, ['x'])
+    if (!held(t, first, 'the first request for x')) return `${first.status}`
     await bobAnswers(first, 'approve')
     await poll(first)
-    const r = await askFor(m, ['site'])
+    const r = await askFor(m, ['x'])
     t.should(r.status === 200, `issue the token without asking Bob again for an item Bob allowed under this mission, since the mission log counts (§4.4); got ${r.status} ${r.body?.error ?? ''}`)
-    if (r.status === 200) await granted(t, r, m, ['site'])
-    return `held, allowed by Bob, then ${r.status} for site, ${told(await verdict(m, 'site'))}`
+    if (r.status === 200) await granted(t, r, m, ['x'])
+    return `held, allowed by Bob, then ${r.status} for x, ${told(await verdict(m, 'x'))}`
   },
 
   review_denied: async t => {

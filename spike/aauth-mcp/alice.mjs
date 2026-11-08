@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { buildAAuthHeader, createResourceToken } from '@aauth/resource'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { RULES, consoleToken, openState, requesterId, tokenMatches } from './alice-state.mjs'
+import { RULES, consoleToken, openState, requesterId, slug, tokenMatches } from './alice-state.mjs'
 import { PORTS, RESOURCE } from './config.mjs'
 import { isMain, json, listen, logger, readBody, short } from './http.mjs'
 import { resourceKey } from './keys.mjs'
@@ -16,7 +16,7 @@ const log = logger('alice')
 // Kept under Cloudflare's 100 s origin timeout, so a held call answers before the tunnel drops it.
 const ASK_WAIT_MS = Number(process.env.ALICE_ASK_WAIT_S || 55) * 1000
 const BASE_SCOPE = 'context'
-const itemScope = id => `item:${id}`
+const itemScope = item => `item:${item.scope_id ?? item.id}`
 
 const state = openState(new URL('./alice.json', import.meta.url))
 const first = state.owner.first_name
@@ -48,24 +48,28 @@ async function listing(person, member) {
     throw err
   }
   const named = id => rows.find(r => r.id === id && r.rule === 'everyone')?.value
+  const name = [named('first'), named('last')].filter(Boolean).join(' ') || 'This member'
+  // Scopes show on Bob's page and to his supervisor, so they name the owner readably; the id prefix keeps namesakes apart.
+  const handle = `${slug(name)}-${person.replace(/-/g, '').slice(0, 6)}`
   return {
     owner: person,
-    name: [named('first'), named('last')].filter(Boolean).join(' ') || 'This member',
+    name,
     first: named('first') || 'This member',
-    items: rows.filter(r => r.id !== 'first' && r.id !== 'last')
-      .map(r => ({ id: `${person}/${r.id}`, item_id: r.id, owner: person, label: r.label, url: r.value, rule: r.rule })),
+    items: rows.filter(r => r.id !== 'first' && r.id !== 'last').map(r => ({
+      id: `${person}/${r.id}`, item_id: r.id, scope_id: `${handle}/${r.id}`, owner: person, label: r.label, url: r.value, rule: r.rule,
+    })),
   }
 }
 
-// Every item a call would disclose needs its own scope, so each new item goes back through Bob's person server.
-async function requiredScopes(rid, member, message) {
-  const ids = new Set()
+// Each item an owner must answer for needs its own scope from Bob's person server; Everyone items are anyone's, and refused scopes are not asked for again.
+async function requiredScopes(rid, member, message, refused) {
+  const scopes = new Set()
   for (const m of toolCalls(message, 'search_context')) {
     const args = m.params.arguments ?? {}
     const items = people ? (await listing(args.person, member))?.items ?? [] : undefined
-    for (const i of state.resolve(rid, args, items).items) ids.add(i.id)
+    for (const i of state.resolve(rid, args, items).items) if (i.rule !== 'everyone') scopes.add(itemScope(i))
   }
-  return [BASE_SCOPE, ...[...ids].map(itemScope)]
+  return [BASE_SCOPE, ...[...scopes].filter(s => !refused.has(s))]
 }
 
 async function aauthGate(req, url, raw, message, key, sign) {
@@ -96,7 +100,9 @@ async function aauthGate(req, url, raw, message, key, sign) {
     return reject(403, 'requester_revoked', undefined, `${people ? 'This member' : first} has revoked access for this requester`)
   }
 
-  const needed = await requiredScopes(rid, member, message)
+  // Bob's proxy names the scopes his person server refused, so the call answers with the rest; naming a scope can only withhold its item.
+  const refused = new Set(String(req.headers['x-refused-scopes'] ?? '').split(/\s+/).filter(s => s.startsWith('item:')))
+  const needed = await requiredScopes(rid, member, message, refused)
   const held = token.type === 'auth' ? (token.scope ?? '').split(' ').filter(Boolean) : []
   const missing = needed.filter(s => !held.includes(s))
   if (token.type === 'person' || missing.length) {
@@ -112,21 +118,21 @@ async function aauthGate(req, url, raw, message, key, sign) {
 
   const agent = agentByKey.get(sig.thumbprint) ?? null
   const requester = state.seen({ id: rid, ps, sub: token.sub, label: token.claims?.name, agent, member })
-  return { ok: true, auth: token, requester, agent, member, scopes: held }
+  return { ok: true, auth: token, requester, agent, member, scopes: held, refused }
 }
 
 const text = body => ({ content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] })
 const failure = (error, description) => ({ ...text({ error, error_description: description }), isError: true })
 
 // search_context for one owner's items: alice.json's, or a member's from the store.
-async function answerSearch({ requester, agent, mission, scopes, ids, query, reason, list }) {
+async function answerSearch({ requester, agent, mission, scopes, refused, ids, query, reason, list }) {
   const key = item => item.item_id ?? item.id
   const found = state.resolve(requester.id, { ids, query }, list.items)
   const results = found.items.map(item => ({
     item,
-    ...(scopes.includes(itemScope(item.id))
+    ...(item.rule === 'everyone' || scopes.includes(itemScope(item))
       ? state.decision(requester.id, mission, item, { agent, reason })
-      : { state: 'unscoped' }),
+      : { state: refused.has(itemScope(item)) ? 'refused' : 'unscoped' }),
   }))
 
   const pending = results.filter(r => r.state === 'pending')
@@ -144,9 +150,15 @@ async function answerSearch({ requester, agent, mission, scopes, ids, query, rea
     shared,
     pending: idsIn('pending'),
     declined: idsIn('denied'),
+    refused: idsIn('refused'),
     not_found: [...found.hidden, ...found.unknown, ...idsIn('unscoped')],
   }
-  if (out.pending.length) out.note = `${list.first} has not answered about ${out.pending.join(', ')} yet. Call search_context with those ids again later.`
+  const notes = [
+    out.pending.length && `${list.first} has not answered about ${out.pending.join(', ')} yet. Call search_context with those ids again later.`,
+    out.declined.length && `${list.first} declined ${out.declined.join(', ')}.`,
+    out.refused.length && `Your own person server refused ${out.refused.join(', ')} under your mission, so ${list.first} was never asked.`,
+  ].filter(Boolean)
+  if (notes.length) out.note = notes.join(' ')
 
   const decisions = Object.fromEntries([
     ...results.map(r => [key(r.item), r.by ?? r.state]),
@@ -160,16 +172,16 @@ async function answerSearch({ requester, agent, mission, scopes, ids, query, rea
     tool: 'search_context',
     query: [query, ...(ids ?? [])].filter(Boolean).join(', '),
     disclosed: Object.keys(shared),
-    withheld: [...out.declined, ...out.pending, ...found.hidden],
+    withheld: [...out.declined, ...out.pending, ...out.refused, ...found.hidden],
     decided_by: [...new Set(results.map(r => r.by).filter(Boolean))].join(', ') || 'rule',
     reason: reason ?? '',
     decisions,
   })
-  log(`4. ${requester.label} from ${list.name}: shared [${Object.keys(shared).join(', ')}]; declined [${out.declined.join(', ')}]; pending [${out.pending.join(', ')}]; hidden [${found.hidden.join(', ')}]`)
+  log(`4. ${requester.label} from ${list.name}: shared [${Object.keys(shared).join(', ')}]; declined [${out.declined.join(', ')}]; refused by the requester's side [${out.refused.join(', ')}]; pending [${out.pending.join(', ')}]; hidden [${found.hidden.join(', ')}]`)
   return text(out)
 }
 
-function contextServer({ auth, requester, agent, scopes }) {
+function contextServer({ auth, requester, agent, scopes, refused }) {
   const server = new McpServer({ name: 'alice-context', version: '0.1.0' })
   const mission = auth.mission_s256 ?? ''
 
@@ -185,17 +197,17 @@ function contextServer({ auth, requester, agent, scopes }) {
 
   server.registerTool('search_context', {
     title: `Search ${first}'s context`,
-    description: `Returns items of ${ownerName}'s context, by id or by words matched against their labels. With neither, returns the shared items. For items ${first} must answer, the call waits up to ${ASK_WAIT_MS / 1000} s; call again later for any still pending. Say why you need them in reason: ${first} reads it.`,
+    description: `Returns items of ${ownerName}'s context, by id or by words matched against their labels. With neither, returns the shared items. For items ${first} must answer, the call waits up to ${ASK_WAIT_MS / 1000} s; call again later for any still pending. Say why you need them in reason: ${first} reads it. In the answer, declined means ${first} said no; refused means your own person server refused the item under your mission, and ${first} was never asked.`,
     inputSchema: {
       ids: z.array(z.string()).optional().describe('Item ids from get_context_schema'),
       query: z.string().optional().describe('Words to match against item labels'),
       reason: z.string().optional().describe(`Why you need these items; ${first} sees it when asked`),
     },
-  }, ({ ids, query, reason }) => answerSearch({ requester, agent, mission, scopes, ids, query, reason, list: aliceOnly }))
+  }, ({ ids, query, reason }) => answerSearch({ requester, agent, mission, scopes, refused, ids, query, reason, list: aliceOnly }))
   return server
 }
 
-function networkServer({ auth, requester, member, agent, scopes }) {
+function networkServer({ auth, requester, member, agent, scopes, refused }) {
   const server = new McpServer({ name: 'people-network', version: '0.1.0' })
   const mission = auth.mission_s256 ?? ''
   const notMember = () => failure('not_a_member', `${requester.label}'s person server is not linked to a member of the network.`)
@@ -231,7 +243,7 @@ function networkServer({ auth, requester, member, agent, scopes }) {
 
   server.registerTool('search_context', {
     title: "Get a person's items",
-    description: `Returns items one member of the network shares, by id or by words matched against their labels. With neither, returns their shared items. Take the person id from find_people. For items the person must answer, the call waits up to ${ASK_WAIT_MS / 1000} s; call again later for any still pending. Say why you need them in reason: the person reads it.`,
+    description: `Returns items one member of the network shares, by id or by words matched against their labels. With neither, returns their shared items. Take the person id from find_people. For items the person must answer, the call waits up to ${ASK_WAIT_MS / 1000} s; call again later for any still pending. Say why you need them in reason: the person reads it. In the answer, declined means the person said no; refused means your own person server refused the item under your mission, and the person was never asked.`,
     inputSchema: {
       person: z.string().describe('The person id from find_people'),
       ids: z.array(z.string()).optional().describe('Item ids from find_people'),
@@ -242,7 +254,7 @@ function networkServer({ auth, requester, member, agent, scopes }) {
     if (!member) return notMember()
     const list = await listing(person, member)
     if (!list) return failure('unknown_person', `No member ${person} in the network.`)
-    return answerSearch({ requester, agent, mission, scopes, ids, query, reason, list })
+    return answerSearch({ requester, agent, mission, scopes, refused, ids, query, reason, list })
   })
   return server
 }

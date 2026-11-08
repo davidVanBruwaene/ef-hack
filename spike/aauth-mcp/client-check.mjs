@@ -117,9 +117,25 @@ const CASES = {
   unapproved: { mission: 'made-up', call: { ids: ['first'] }, fails: /mission|person token/i },
   mission_denied: { propose: 'deny', fails: /\bdenied\b/ },
   self_approval: { propose: 'self', fails: /\bdenied\b/ },
-  review_allow: { call: { ids: ['last'], reason: 'To greet Alice by her full name.' }, bob: ['item:last', 'approve'], pass: r => r.shared.last },
-  review_deny: { call: { ids: ['linkedin'] }, bob: ['item:linkedin', 'deny'], fails: /declined/ },
-  remembered_deny: { call: { ids: ['sessions'] }, bob: ['item:sessions', 'deny'], repeat: true, fails: /supervisor refused item:sessions/ },
+  review_allow: {
+    call: { ids: ['location'], reason: 'To suggest a place to meet.' },
+    bob: ['item:location', 'approve'],
+    alice: ['location', 'approve'],
+    pass: r => r.shared.location,
+  },
+  review_deny: {
+    call: { ids: ['linkedin'] },
+    bob: ['item:linkedin', 'deny'],
+    pass: r => r.refused.includes('linkedin') && !r.shared.linkedin && /declined the request/.test(r.refused_why ?? ''),
+  },
+  remembered_deny: {
+    call: { ids: ['sessions'] },
+    bob: ['item:sessions', 'deny'],
+    repeat: true,
+    pass: r => r.refused.includes('sessions') && /earlier in this mission/.test(r.refused_why ?? ''),
+  },
+  // Calendar was allowed earlier in this mission and sessions refused, so one call returns the first and lists the second.
+  partial: { call: { ids: ['calendar', 'sessions'] }, pass: r => r.shared.calendar && r.refused.includes('sessions') },
 }
 
 async function runCase(name, approved) {
@@ -161,7 +177,7 @@ async function runCase(name, approved) {
     if (answer.isError) throw new Error(answer.content?.[0]?.text ?? 'tool error')
     const result = JSON.parse(answer.content[0].text)
     const ok = !c.fails && c.pass(result)
-    console.log(`${ok ? '✓' : '✗'} ${name}: schema lists ${schema.items.length} items; shared [${Object.keys(result.shared).join(', ')}] declined [${result.declined.join(', ')}] pending [${result.pending.join(', ')}] not_found [${result.not_found.join(', ')}]${said ? `; ${said}` : ''}${bobSaid ? `; ${bobSaid}` : ''}`)
+    console.log(`${ok ? '✓' : '✗'} ${name}: schema lists ${schema.items.length} items; shared [${Object.keys(result.shared).join(', ')}] declined [${result.declined.join(', ')}] refused [${(result.refused ?? []).join(', ')}] pending [${result.pending.join(', ')}] not_found [${result.not_found.join(', ')}]${said ? `; ${said}` : ''}${bobSaid ? `; ${bobSaid}` : ''}`)
     return ok
   } catch (err) {
     const ok = !!c.fails?.test(err.message)
