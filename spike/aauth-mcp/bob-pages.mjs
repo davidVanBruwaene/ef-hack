@@ -1,4 +1,4 @@
-// The pages Bob opens from a QR code or link: approve a mission his agent proposed.
+// The pages Bob opens from a QR code or link: approve a mission, then answer the requests his supervisor holds for him.
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 
 const STYLE = `
@@ -20,6 +20,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.deny { color: var(--deny); }
 .fine { color: var(--muted); font-size: 13px; }
 .done { font-size: 18px; font-weight: 600; }
+h2 { font-size: 17px; margin: 24px 0 12px; }
+.why { color: var(--muted); font-size: 14px; margin: 8px 0 0; }
+.said { font-size: 15px; margin: 10px 0 0; padding-left: 10px; border-left: 3px solid var(--line); }
+.item { font-weight: 600; }
 `
 
 const page = (title, body) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -33,7 +37,8 @@ export function missionPage(m, { bobName }) {
     const text = m.status === 'approved' ? 'Approved. Your agent can go ahead.' : 'Denied. Your agent will not start this mission.'
     return page('Mission', `<h1>${esc(text)}</h1><div class="card">${facts}</div>${
       m.status === 'approved' ? `<div class="card"><label>Approved mission</label><div style="white-space:pre-wrap">${esc(m.approved_description)}</div></div>
-      <p class="fine">Expires ${esc(new Date(m.expires_at).toUTCString())}. Mission ${esc(m.s256.slice(0, 12))}…</p>` : ''}`)
+      <p class="fine">Expires ${esc(new Date(m.expires_at).toUTCString())}. Mission ${esc(m.s256.slice(0, 12))}…</p>
+      <h2>Requests that need you</h2><section id="reviews"><p class="fine">Loading…</p></section>${liveReviews(m.code)}` : ''}`)
   }
   return page('Approve mission', `<h1>${esc(bobName)}, your agent wants to start a mission</h1>
 <div class="card">${facts}</div>
@@ -44,6 +49,44 @@ export function missionPage(m, { bobName }) {
   <div class="row"><button class="primary" name="decision" value="approve">Approve</button><button class="deny" name="decision" value="deny">Deny</button></div>
 </form>
 <p class="fine">Lasts 24 hours from approval. Each request your agent makes under it is checked against this text.</p>`)
+}
+
+const itemsOf = scopes => scopes.map(s => s.replace(/^item:/, '')).join(', ')
+
+const reviewCard = (r, back) => `<form method="post" action="/interact" class="card">
+  <input type="hidden" name="code" value="${esc(r.code)}">${back ? `<input type="hidden" name="back" value="${esc(back)}">` : ''}
+  <div>Your agent asks <code>${esc(r.resource)}</code> for <span class="item">${esc(itemsOf(r.scopes))}</span>.</div>
+  ${r.justification ? `<p class="said">Your agent says: “${esc(r.justification)}”</p>` : ''}
+  ${(r.verdicts ?? []).filter(v => v.decision !== 'ALLOW').map(v => `<p class="why">${esc(v.scope)}: ${esc(v.reason)}${v.p != null ? ` (p ${esc(v.p)})` : ''}</p>`).join('')}
+  <div class="row"><button class="primary" name="decision" value="approve">Allow</button><button class="deny" name="decision" value="deny">Deny</button></div>
+</form>`
+
+// Polls for held requests while the page is open (the mission's code lets it see them); the list is replaced only when it changes, so a tap in progress survives.
+const liveReviews = code => `<script>
+(function () {
+  var code = ${JSON.stringify(code)}, box = document.getElementById('reviews'), shown = null;
+  function tick() {
+    fetch('/interact/reviews?code=' + encodeURIComponent(code), { cache: 'no-store' })
+      .then(function (r) { return r.json() })
+      .then(function (list) {
+        var next = list.length ? list.map(function (v) { return v.html }).join('') : '<p class="fine">Nothing needs you right now. Requests your supervisor cannot decide appear here.</p>';
+        if (next !== shown) { box.innerHTML = next; shown = next }
+      })
+      .catch(function () {})
+  }
+  tick(); setInterval(tick, 2000)
+})()
+</script>`
+
+export const reviewCards = (reviews, back) => reviews.map(r => ({ code: r.code, html: reviewCard(r, back) }))
+
+export function reviewPage(r, m, { bobName }) {
+  if (r.status !== 'pending') {
+    return page('Request', `<h1>${r.status === 'approved' ? 'Allowed.' : 'Denied.'}</h1><div class="card">Your agent asked <code>${esc(r.resource)}</code> for <span class="item">${esc(itemsOf(r.scopes))}</span>.</div>`)
+  }
+  return page('Your agent is asking', `<h1>${esc(bobName)}, your supervisor wants your call</h1>
+<div class="card"><label>Under your mission</label><div style="white-space:pre-wrap">${esc(m?.approved_description ?? '')}</div></div>
+${reviewCard(r)}`)
 }
 
 export const notFoundPage = () => page('Not found', '<h1>That link has expired or is not valid.</h1>')

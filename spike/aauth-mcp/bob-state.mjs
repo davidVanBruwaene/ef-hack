@@ -1,4 +1,4 @@
-// Bob's state at his person server: the missions his agent proposed, his answers, and the mission log.
+// Bob's state at his person server: the missions his agent proposed, the requests held for his review, his answers, and the mission log.
 import { randomBytes } from 'node:crypto'
 import { bearerToken, jsonFile, now, randomId, sha256 } from './store.mjs'
 
@@ -18,7 +18,7 @@ const newCode = () => {
 export function openBobState() {
   const file = jsonFile('bob-state.json')
   const saved = file.load()
-  const s = { missions: saved.missions ?? [], log: saved.log ?? [] }
+  const s = { missions: saved.missions ?? [], reviews: saved.reviews ?? [], log: saved.log ?? [] }
   let rev = 0
   const listeners = new Set()
   function changed() {
@@ -32,7 +32,12 @@ export function openBobState() {
     rev: () => rev,
     onChange(cb) { listeners.add(cb); return () => listeners.delete(cb) },
     mission: id => s.missions.find(m => m.id === id),
-    byCode: code => s.missions.find(m => m.code === code),
+    review: id => s.reviews.find(r => r.id === id),
+    byCode: code => (code && (s.missions.find(m => m.code === code) ?? s.reviews.find(r => r.code === code))) || undefined,
+    byS256: s256 => (s256 && s.missions.find(m => m.s256 === s256)) || undefined,
+    expired: m => Date.parse(m.expires_at) <= Date.now(),
+    missionLog: s256 => s.log.filter(e => e.mission_s256 === s256),
+    pendingReviews: missionId => s.reviews.filter(r => r.mission === missionId && r.status === 'pending'),
 
     // Approved and not past expires_at: the only missions a person token may name.
     approved(s256) {
@@ -81,8 +86,30 @@ export function openBobState() {
 
     record(entry) { log(entry); changed() },
 
+    openReview({ mission, agent, resource, scopes, justification, verdicts }) {
+      const r = {
+        id: randomId('rv'), code: newCode(), mission: mission.id, mission_s256: mission.s256, agent, resource, scopes, justification, verdicts,
+        status: 'pending', created_at: now(),
+      }
+      s.reviews.push(r)
+      log({ mission: mission.id, mission_s256: mission.s256, event: 'review_opened', agent, detail: scopes.join(' ') })
+      changed()
+      return r
+    },
+
+    decideReview(id, decision) {
+      const r = s.reviews.find(x => x.id === id)
+      if (!r || r.status !== 'pending') return r
+      r.status = decision === 'approve' ? 'approved' : 'denied'
+      r.decided_at = now()
+      log({ mission: r.mission, mission_s256: r.mission_s256, event: `review_${r.status}`, decided_by: 'Bob', detail: r.scopes.join(' ') })
+      changed()
+      return r
+    },
+
     view: () => ({
       missions: [...s.missions].reverse().map(({ blob_b64, ...m }) => m),
+      reviews: [...s.reviews].reverse(),
       log: [...s.log].reverse(),
     }),
   }
