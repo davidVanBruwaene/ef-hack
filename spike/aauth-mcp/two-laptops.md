@@ -55,7 +55,7 @@ The tunnels and DNS records already exist in David's Cloudflare account. Every h
 
 ```bash
 npm run pair             # once: signs Bob's phone in to Bob's person server
-npm run mission          # QR code: Bob approves the mission on that phone
+npm run mission -- "<text>"   # QR code: Bob approves the mission on that phone; the text is required here
 npm run check:missions   # Bob's person server and supervisor against -11, through both tunnels
 npm run mcp-config       # then Claude Code, as in the README
 ```
