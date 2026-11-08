@@ -54,8 +54,8 @@ The tunnels and DNS records already exist in David's Cloudflare account. Every h
 `tunnel.mjs check` fetches each server's metadata at its public URL and confirms that the `issuer` it reports matches `.env`. It also confirms that the console answers. When it passes on both laptops, DNS, TLS, both tunnels and every server line up. Then, on Bob's laptop:
 
 ```bash
-npm run mission          # QR code: Bob approves the mission on his phone
-node mission-check.mjs   # Bob's side against -11, through the tunnel
+npm run mission          # QR code: Bob approves the mission on a phone
+node mission-check.mjs   # Bob's person server and supervisor against -11, through both tunnels
 npm run mcp-config       # then Claude Code, as in the README
 ```
 
