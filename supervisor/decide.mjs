@@ -1,18 +1,18 @@
 // Bob's supervisor (AAuth -11 §4.3, §4.4): judges one act against its mission, with rules first and then one question to Jev.
 import { askJev } from './jev.mjs'
-import { applyRules, list, missionBlob, ruled } from './rules.mjs'
+import { applyRules, list, missionBlob, normalizeAct, ruled } from './rules.mjs'
 
-export { actKey } from './rules.mjs'
 export const QUESTION = 'Is this act consistent with the mission?'
 export const ALLOW_AT = 0.9
 export const DENY_AT = 0.1
 
 export async function decide({ mission, act, log = [] } = {}, opts = {}) {
   try {
-    const settled = applyRules({ mission, act, log }, { now: opts.now ?? Date.now() })
+    const judged = normalizeAct(act)
+    const settled = applyRules({ mission, act: judged, log }, { now: opts.now ?? Date.now() })
     if (settled) return settled
     if (opts.jev === false) return ruled('REVIEW', 'rules_only', 'No rule settles this act, and Jev is off.')
-    const answer = await askJev(jevState(missionBlob(mission), mission, act), QUESTION, opts)
+    const answer = await askJev(jevState(missionBlob(mission), mission, judged), QUESTION, opts)
     if (answer.error) {
       return { ...ruled('REVIEW', 'jev_unavailable', `No rule settles this act, and Jev gave no answer: ${answer.error}.`), model: answer.model ?? null }
     }

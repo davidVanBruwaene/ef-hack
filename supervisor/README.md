@@ -18,19 +18,23 @@ const d = await decide({ mission, act, log })
 ```
 
 - **`mission`** is the approved mission, in any of these forms:
+  - the decoded blob plus `s256`, as `bob.mjs` passes it;
   - the record `bob-state.mjs` keeps, `{s256, status, blob_b64}`;
-  - the -11 §8.2 approval response, `{s256, mission}`;
-  - the decoded blob.
+  - the -11 §8.2 approval response, `{s256, mission}`.
 
   The approved blob is what gets judged, not the proposal kept beside it. Accepted updates (-11 §8.4) go in `mission.updates` as strings.
 - **`act`** has a `type`:
   - `token_request`: `{type, agent, resource, scope, justification?}`. Each of Alice's items is a scope `item:<id>`.
   - `permission_request`: `{type, agent, action, description?, parameters?}`.
   - `mission_update` and `mission_completion`.
-- **`log`** is the mission log, oldest first:
-  - Append each decision as `{mission_s256, act, ...decision}`.
-  - Append Bob's answer to a review as `{mission_s256, act, decision: 'ALLOW' | 'DENY', by: 'Bob'}`.
-  - Entries for another `mission_s256` are ignored.
+
+  The short `kind` (`token`, `permission`, `update`, `completion`) works in place of `type`.
+- **`log`** is the mission's log, oldest first. Three kinds of row count as answers:
+  - rows with `act` and `decision`;
+  - `auth_token` rows, one answer per entry in `verdicts` (`{scope, decision, by}`);
+  - Bob's `review_approved` and `review_denied` rows, one answer per scope in `detail`.
+
+  Every other row, such as `proposed`, `approved` or `review_opened`, is ignored, and so is any row for another `mission_s256`. A logged answer without a resource matches on its scopes alone.
 - **The result.** ALLOW means the person server issues, DENY means it refuses, and REVIEW means it holds the request for Bob. `rule` names the rule that decided and is null when Jev decided. `p` and `model` are Jev's. `reason` is one sentence for Bob's page.
 - `decide()` never throws. Options for tests: `{now, fetch, env, timeoutMs, jev: false}`.
 

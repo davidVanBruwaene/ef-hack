@@ -4,6 +4,8 @@ export const MAX_AGENT_TEXT = 2000
 
 const ACTIVE = new Set(['approved', 'active'])
 const JUDGED = new Set(['token_request', 'permission_request'])
+const KINDS = { token: 'token_request', permission: 'permission_request', update: 'mission_update', completion: 'mission_completion' }
+const REVIEW_ANSWERS = { review_approved: 'ALLOW', review_denied: 'DENY' }
 
 export const ruled = (decision, rule, reason) => ({ decision, by: 'rule', rule, p: null, model: null, reason })
 
@@ -34,9 +36,35 @@ export function missionBlob(mission) {
   return typeof blob?.description === 'string' && blob.description.trim() ? blob : null
 }
 
-export function actKey(act) {
-  if (act?.type === 'permission_request') return `permission_request ${act.action}`
-  return `${act?.type} ${origin(act?.resource)} ${scopes(act?.scope).join(' ')}`
+// Takes type (token_request, ...) or the short kind (token, ...) that the first contract note used.
+export function normalizeAct(act) {
+  if (!act || typeof act !== 'object') return {}
+  return act.type === undefined && Object.hasOwn(KINDS, act.kind) ? { ...act, type: KINDS[act.kind] } : act
+}
+
+// A logged act with no resource matches on its scopes alone.
+export function sameAct(a, b) {
+  if (a.type !== b.type) return false
+  if (a.type === 'permission_request') return a.action === b.action
+  const sameScopes = scopes(a.scope).join(' ') === scopes(b.scope).join(' ')
+  return sameScopes && (!a.resource || !b.resource || origin(a.resource) === origin(b.resource))
+}
+
+// Every answer in the mission's log as {act, decision, by}: rows carrying act, auth_token verdicts, and Bob's review answers.
+export function answers(log, mission) {
+  const token = (e, scope) => ({ type: 'token_request', resource: e.resource, scope })
+  return list(log)
+    .filter(e => e && typeof e === 'object' && (!e.mission_s256 || !mission?.s256 || e.mission_s256 === mission.s256))
+    .flatMap(e => {
+      if (e.act) return [{ act: normalizeAct(e.act), decision: e.decision, by: e.by ?? e.decided_by }]
+      if (Array.isArray(e.verdicts)) {
+        return e.verdicts.filter(v => v?.scope).map(v => ({ act: v.act ? normalizeAct(v.act) : token(e, v.scope), decision: v.decision, by: v.by }))
+      }
+      if (Object.hasOwn(REVIEW_ANSWERS, e.event)) {
+        return scopes(e.detail).map(scope => ({ act: token(e, scope), decision: REVIEW_ANSWERS[e.event], by: e.decided_by }))
+      }
+      return []
+    })
 }
 
 const RULES = [
@@ -56,14 +84,13 @@ const RULES = [
   ({ act }) =>
     !(act.type === 'token_request' ? act.resource : act.action) &&
     ruled('REVIEW', 'incomplete_act', 'The act names no resource or action.'),
-  ({ act, log }) => {
-    const key = actKey(act)
-    const e = log.findLast(x => x.act && (x.decision === 'ALLOW' || x.decision === 'DENY') && actKey(x.act) === key)
+  ({ act, answered }) => {
+    const e = answered.findLast(x => (x.decision === 'ALLOW' || x.decision === 'DENY') && sameAct(x.act, act))
     const verb = e?.decision === 'ALLOW' ? 'allowed' : 'denied'
-    return e && ruled(e.decision, 'decided_before', `The same request was ${verb} earlier in this mission, by ${who(e.by ?? e.decided_by)}.`)
+    return e && ruled(e.decision, 'decided_before', `The same request was ${verb} earlier in this mission, by ${who(e.by)}.`)
   },
-  ({ log }) => {
-    const n = log.filter(e => e.decision === 'DENY').length
+  ({ answered }) => {
+    const n = answered.filter(e => e.decision === 'DENY').length
     return n >= DENIALS_BEFORE_REVIEW && ruled('REVIEW', 'denial_streak', `${n} requests were denied in this mission, so new ones go to the person.`)
   },
   ({ blob, act }) =>
@@ -81,12 +108,9 @@ const RULES = [
   },
 ]
 
-const inMission = (log, mission) =>
-  list(log).filter(e => e && typeof e === 'object' && (!e.mission_s256 || !mission?.s256 || e.mission_s256 === mission.s256))
-
 // A decision when a rule settles the act, else null.
 export function applyRules({ mission, act, log } = {}, { now = Date.now() } = {}) {
-  const ctx = { mission, act: act && typeof act === 'object' ? act : {}, blob: missionBlob(mission), log: inMission(log, mission), now }
+  const ctx = { mission, act: normalizeAct(act), blob: missionBlob(mission), answered: answers(log, mission), now }
   for (const rule of RULES) {
     const d = rule(ctx)
     if (d) return d
