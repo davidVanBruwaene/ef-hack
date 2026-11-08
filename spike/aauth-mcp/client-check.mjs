@@ -3,13 +3,16 @@ import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { consoleToken } from './alice-state.mjs'
+import { consoleToken as bobConsoleToken } from './bob-state.mjs'
 import { BOB_NAME, DEFAULT_MISSION, LOOPBACK, PORTS, PS, RESOURCE } from './config.mjs'
 import { requestMission } from './missions.mjs'
 import { randomId, sha256 } from './store.mjs'
 
 const PROXY = fileURLToPath(new URL('./proxy.mjs', import.meta.url))
 const ALICE_API = LOOPBACK[new URL(RESOURCE).hostname] ? `http://127.0.0.1:${PORTS.resource}/api` : `${RESOURCE}/api`
+const BOB_API = LOOPBACK[new URL(PS).hostname] ? `http://127.0.0.1:${PORTS.ps}/api` : `${PS}/api`
 const token = consoleToken()
+const bobToken = bobConsoleToken()
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 // A link as Bob's phone would open it: through loopback for *.aauth.test, else at its public URL.
@@ -32,14 +35,36 @@ async function bob(url, code, decision) {
   if (!res.ok) throw new Error(`approval POST ${res.status}`)
 }
 
-async function api(path, body) {
-  const res = await fetch(`${ALICE_API}${path}`, {
+async function call(base, bearer, path, body) {
+  const res = await fetch(`${base}${path}`, {
     method: body ? 'POST' : 'GET',
-    headers: { authorization: `Bearer ${token}`, ...(body ? { 'content-type': 'application/json' } : {}) },
+    headers: { authorization: `Bearer ${bearer}`, ...(body ? { 'content-type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) throw new Error(`${path}: ${res.status} ${await res.text()}`)
   return res.json()
+}
+const api = (path, body) => call(ALICE_API, token, path, body)
+
+// Stands in for Bob answering, on his page, a request his supervisor held for him.
+async function bobReview(s256, scope, decision, reason) {
+  for (let i = 0; i < 150; i++) {
+    const review = (await call(BOB_API, bobToken, '/state')).reviews
+      .find(r => r.mission_s256 === s256 && r.scopes.includes(scope) && r.status === 'pending')
+    if (review) {
+      if (reason && review.justification !== reason) throw new Error(`the review shows justification ${JSON.stringify(review.justification)}, not the call's reason`)
+      await sleep(300)
+      const res = await open(`${PS}/interact`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ code: review.code, decision }).toString(),
+      })
+      if (!res.ok) throw new Error(`review POST ${res.status}`)
+      return `the supervisor held ${scope}${reason ? ' with the agent\'s reason' : ''} and Bob answered ${decision}`
+    }
+    await sleep(200)
+  }
+  throw new Error(`no review for ${scope} reached Bob`)
 }
 
 // Stands in for Alice answering in her console once the ask reaches her.
@@ -73,6 +98,8 @@ const CASES = {
   no_mission: { mission: '', call: { ids: ['first'] }, fails: /mission|person token/i },
   unapproved: { mission: 'made-up', call: { ids: ['first'] }, fails: /mission|person token/i },
   mission_denied: { propose: 'deny', fails: /access_denied/ },
+  review_allow: { call: { ids: ['last'], reason: 'To greet Alice by her full name.' }, bob: ['item:last', 'approve'], pass: r => r.shared.last },
+  review_deny: { call: { ids: ['linkedin'] }, bob: ['item:linkedin', 'deny'], fails: /declined|access_denied|refused/i },
 }
 
 async function runCase(name, approved) {
@@ -102,14 +129,15 @@ async function runCase(name, approved) {
   try {
     await client.connect(transport)
     const schema = JSON.parse((await client.callTool({ name: 'get_context_schema', arguments: {} })).content[0].text)
-    const [answer, said] = await Promise.all([
+    const [answer, said, bobSaid] = await Promise.all([
       client.callTool({ name: 'search_context', arguments: c.call }),
       c.alice ? alice(s256, ...c.alice) : undefined,
+      c.bob ? bobReview(s256, ...c.bob, c.call.reason) : undefined,
     ])
     if (answer.isError) throw new Error(answer.content?.[0]?.text ?? 'tool error')
     const result = JSON.parse(answer.content[0].text)
     const ok = !c.fails && c.pass(result)
-    console.log(`${ok ? '✓' : '✗'} ${name}: schema lists ${schema.items.length} items; shared [${Object.keys(result.shared).join(', ')}] declined [${result.declined.join(', ')}] pending [${result.pending.join(', ')}] not_found [${result.not_found.join(', ')}]${said ? `; ${said}` : ''}`)
+    console.log(`${ok ? '✓' : '✗'} ${name}: schema lists ${schema.items.length} items; shared [${Object.keys(result.shared).join(', ')}] declined [${result.declined.join(', ')}] pending [${result.pending.join(', ')}] not_found [${result.not_found.join(', ')}]${said ? `; ${said}` : ''}${bobSaid ? `; ${bobSaid}` : ''}`)
     return ok
   } catch (err) {
     const ok = !!c.fails?.test(err.message)
@@ -125,8 +153,8 @@ const names = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys
 const unknown = names.filter(n => !CASES[n])
 if (unknown.length) { console.log(`unknown case ${unknown.join(', ')}; cases: ${Object.keys(CASES).join(', ')}`); process.exit(1) }
 
-// One fresh mission per run, approved on Bob's page, so Alice's per-mission answers from earlier runs do not carry over.
-const approved = await requestMission(`${DEFAULT_MISSION} (check ${Date.now().toString(36)})`, {
+// A fresh mission per run, so earlier answers do not carry over; it names the items most cases ask for, so the rules-only supervisor allows them.
+const approved = await requestMission(`${DEFAULT_MISSION} Alice's first name, personal site, calendar and email are fine to look at. (check ${Date.now().toString(36)})`, {
   onInteraction: (url, code) => bob(url, code, 'approve'),
 })
 console.log(`mission ${approved.s256.slice(0, 8)}… approved on Bob's page: "${approved.blob.description}"`)
