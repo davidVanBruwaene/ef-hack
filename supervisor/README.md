@@ -69,7 +69,7 @@ Then Jev. When Jev gives no answer, the act goes to review under the rule name `
   - The agent's own text, marked as written by the agent and not verified.
 
   Nothing else on the act is sent, so resource content never reaches Jev. TypeSafe offers no zero data retention.
-- **The thresholds.** p ≥ 0.9 allows, p ≤ 0.1 denies, and anything between goes to review. Every decision records the `model` the reply names.
+- **The thresholds.** p ≥ 0.8 allows, p ≤ 0.3 denies, and anything between goes to review. Every decision records the `model` the reply names.
 - **No answer.** Any of these sends the act to review:
   - an HTTP error;
   - no reply within 4 s;
