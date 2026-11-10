@@ -236,6 +236,48 @@ try {
     return "Ana's site came back"
   })
 
+  await step('update_context', async () => {
+    const alice = async (path, body) => {
+      const res = await fetch(`http://127.0.0.1:${WORLD.AAUTH_RESOURCE_PORT}${path}`, {
+        method: body ? 'POST' : 'GET', headers: { cookie: dana.cookie(), ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined,
+      })
+      return { status: res.status, json: await res.json().catch(() => null) }
+    }
+    const answerNext = decision => (async () => {
+      for (let i = 0; i < 100; i++) {
+        const w = (await alice('/api/state')).json?.writes?.find(x => x.status === 'pending')
+        if (w) return { w, r: await alice(`/api/writes/${w.id}`, { decision }) }
+        await sleep(200)
+      }
+      throw new Error('the write never reached Dana\'s console')
+    })()
+    const call = args => client.callTool({ name: 'update_context', arguments: args }).then(parsed)
+
+    const quiet = await call({ label: 'Notes', value: 'https://dana.example.org/notes', reason: 'Keep my notes link' })
+    check(quiet.status === 'saved' && quiet.item.rule === 'only_me', `an Only me item said ${JSON.stringify(quiet)}`)
+    const bad = await call({ label: 'Bad', value: 'javascript:alert(1)' })
+    check(bad.error === 'value_must_be_a_link', `a non-link said ${JSON.stringify(bad)}`)
+
+    const approving = answerNext('approve')
+    const shown = await call({ label: 'LinkedIn', value: 'https://linkedin.com/in/dana', rule: 'everyone', reason: 'So people I meet can find me' })
+    const { w } = await approving
+    check(w.after.value === 'https://linkedin.com/in/dana' && w.after.rule === 'everyone' && !w.before, `Dana's console showed ${JSON.stringify(w)}`)
+    check(shown.status === 'saved' && shown.item.id === 'linkedin', `the approved write said ${JSON.stringify(shown)}`)
+    const seen = await eli.call('GET', '/network/search?q=Dana')
+    check(seen[0]?.items?.some(i => i.value === 'https://linkedin.com/in/dana'), `Eli sees ${JSON.stringify(seen)}`)
+
+    const declining = answerNext('deny')
+    const widen = await call({ id: 'notes', rule: 'ask', reason: 'Let people ask for my notes' })
+    const d = await declining
+    check(d.w.before?.rule === 'only_me' && d.w.after.rule === 'ask', `the widening showed ${JSON.stringify(d.w)}`)
+    check(widen.status === 'declined', `the declined write said ${JSON.stringify(widen)}`)
+    const notes = (await dana.call('GET', '/me/items')).find(i => i.id === 'notes')
+    check(notes?.rule === 'only_me', `after declining, notes is ${JSON.stringify(notes)}`)
+    const theirs = await call({ id: 'site-2', value: 'https://x.example' })
+    check(theirs.error === 'not_found', `a missing id said ${JSON.stringify(theirs)}`)
+    return 'Only me saved at once; Everyone saved after Dana confirmed the exact link; widening Only me declined and left alone'
+  })
+
   await step('two_members', async () => {
     const theirs = await connect(eli, "Eli's agent")
     const elis = await mcpClient(theirs.tokens.access_token)

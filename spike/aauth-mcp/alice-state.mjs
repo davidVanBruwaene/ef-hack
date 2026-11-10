@@ -23,13 +23,14 @@ export function openState(seedUrl) {
     requesters: saved.requesters ?? [],
     asks: saved.asks ?? [],
     disclosures: saved.disclosures ?? [],
+    writes: saved.writes ?? [],
   }
   let rev = 0
   const listeners = new Set()
 
   function changed() {
-    const { items, requesters, asks, disclosures } = s
-    file.save({ items, requesters, asks, disclosures })
+    const { items, requesters, asks, disclosures, writes } = s
+    file.save({ items, requesters, asks, disclosures, writes })
     rev++
     for (const l of listeners) l(rev)
   }
@@ -103,6 +104,21 @@ export function openState(seedUrl) {
     }
   }
 
+  // Resolves once pred() holds or ms pass, whichever is first.
+  function waitFor(pred, ms) {
+    if (pred()) return Promise.resolve()
+    return new Promise(resolve => {
+      const done = () => { listeners.delete(check); clearTimeout(timer); resolve() }
+      const check = () => pred() && done()
+      const timer = setTimeout(done, ms)
+      listeners.add(check)
+    })
+  }
+
+  // The same change asked for again under the same mission is the same write, whatever state it reached.
+  const sameWrite = (w, x) => w.owner === x.owner && w.requester === x.requester && w.mission_s256 === x.mission_s256 &&
+    w.item_id === x.item_id && JSON.stringify(w.after) === JSON.stringify(x.after)
+
   // Each entry hashes the previous one, so an edited or dropped entry breaks the chain.
   function disclose(entry) {
     const prev = s.disclosures.at(-1)?.hash ?? ''
@@ -124,6 +140,34 @@ export function openState(seedUrl) {
     decision,
     waitDecided,
     disclose,
+
+    // An agent's change to its own member's item, held until the member answers in the console.
+    proposeWrite(x) {
+      // A saved write answers a repeat only briefly, so the same change made again later is made again.
+      const live = w => w.status === 'pending' || w.status === 'approved' || (w.status === 'saved' && Date.parse(w.saved_at) > Date.now() - 15 * 60_000)
+      const found = s.writes.findLast(w => sameWrite(w, x) && live(w))
+      if (found) return found
+      const w = { id: randomId('w'), ...x, status: 'pending', created_at: now() }
+      s.writes.push(w)
+      changed()
+      return w
+    },
+    write: id => s.writes.find(w => w.id === id),
+    // With an owner, only that owner's writes can be answered.
+    decideWrite(id, decision, owner) {
+      const w = s.writes.find(x => x.id === id && (owner === undefined || x.owner === owner))
+      if (!w || w.status !== 'pending') return w ?? null
+      Object.assign(w, { status: decision === 'approve' ? 'approved' : 'denied', decided_at: now() })
+      changed()
+      return w
+    },
+    settleWrite(id, result) {
+      const w = s.writes.find(x => x.id === id)
+      Object.assign(w, result.error ? { status: 'failed', error: result.error } : { status: 'saved', item_id: result.id, saved_at: now() })
+      changed()
+      return w
+    },
+    waitWrite: (id, ms) => waitFor(() => !['pending', 'approved'].includes(s.writes.find(w => w.id === id)?.status), ms),
 
     seen({ id, ps, sub, label, agent, member }) {
       let r = requester(id)
@@ -188,7 +232,7 @@ export function openState(seedUrl) {
     // With an owner: that owner's asks and disclosures, and the requesters they involve, with their status for this owner only.
     view(owner) {
       if (owner === undefined) {
-        return { owner: s.owner, items: s.items, requesters: s.requesters, asks: [...s.asks].reverse(), disclosures: [...s.disclosures].reverse() }
+        return { owner: s.owner, items: s.items, requesters: s.requesters, asks: [...s.asks].reverse(), disclosures: [...s.disclosures].reverse(), writes: [...s.writes].reverse() }
       }
       const asks = s.asks.filter(a => a.owner === owner)
       const disclosures = s.disclosures.filter(d => d.owner === owner)
@@ -200,7 +244,8 @@ export function openState(seedUrl) {
           status: revoked_by?.includes(owner) ? 'revoked' : 'active',
           remembered: Object.fromEntries(Object.entries(remembered ?? {}).filter(([k]) => k.startsWith(`${owner}/`))),
         }))
-      return { requesters, asks: [...asks].reverse(), disclosures: [...disclosures].reverse() }
+      const writes = s.writes.filter(w => w.owner === owner)
+      return { requesters, asks: [...asks].reverse(), disclosures: [...disclosures].reverse(), writes: [...writes].reverse() }
     },
   }
 }

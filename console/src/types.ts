@@ -37,6 +37,19 @@ export interface Disclosure {
   withheld: string[]
   decided_by: string
   reason: string
+  decisions?: Record<string, string>
+}
+
+// An agent's change to its own member's item, waiting for the member in the console.
+export interface Write {
+  id: string
+  agent: string
+  item_id: string | null
+  before: { value: string; rule: Rule } | null
+  after: { label: string; value: string; rule: Rule }
+  reason: string
+  status: 'pending' | 'approved' | 'denied' | 'saved' | 'failed'
+  created_at: string
 }
 
 export interface State {
@@ -45,6 +58,7 @@ export interface State {
   requesters: Requester[]
   asks: Ask[]
   disclosures: Disclosure[]
+  writes?: Write[]
   // Set by the console, never by a server: which part of the state could not be loaded.
   notice?: string
 }

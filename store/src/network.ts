@@ -12,6 +12,7 @@ import {
   effectiveRule,
   inviteByToken,
   inviteUsable,
+  isLink,
   isRule,
   searchMembers,
 } from './people.ts'
@@ -168,6 +169,31 @@ export function createNetwork(db: DatabaseSync, config: Config, userFor: (c: Con
     if (!row(db, 'SELECT 1 FROM users WHERE id = ?', owner)) return c.json({ error: 'unknown_member' }, 404)
     const its = rows<ItemRow>(db, 'SELECT * FROM items WHERE user_id = ? ORDER BY created_at', owner)
     return c.json(its.map((it) => ({ id: it.id, label: it.label, value: it.value, network_rule: it.rule, rule: person ? effectiveRule(db, owner, person, it) : it.rule })))
+  })
+
+  // An agent's write, after Alice's server has checked it with the member: add an item, or change one's value or rule.
+  app.post('/internal/users/:id/items', internal, async (c) => {
+    const owner = c.req.param('id')
+    if (!row(db, 'SELECT 1 FROM users WHERE id = ?', owner)) return c.json({ error: 'unknown_member' }, 404)
+    const b = await c.req.json().catch(() => ({}))
+    if (b.rule !== undefined && !isRule(b.rule)) return c.json({ error: 'bad_rule' }, 400)
+    const r = addItem(db, owner, String(b.label ?? ''), String(b.value ?? ''), b.rule ?? 'only_me')
+    if (typeof r === 'string') return c.json({ error: r }, 400)
+    return c.json({ id: r.id, label: r.label, value: r.value, rule: r.rule })
+  })
+
+  app.post('/internal/users/:id/items/:item', internal, async (c) => {
+    const owner = c.req.param('id')
+    const id = c.req.param('item')
+    const it = row<ItemRow>(db, 'SELECT * FROM items WHERE user_id = ? AND id = ?', owner, id)
+    if (!it) return c.json({ error: row(db, 'SELECT 1 FROM users WHERE id = ?', owner) ? 'not_found' : 'unknown_member' }, 404)
+    const b = await c.req.json().catch(() => ({}))
+    if (b.rule !== undefined && !isRule(b.rule)) return c.json({ error: 'bad_rule' }, 400)
+    if ((id === 'first' || id === 'last') && b.value !== undefined) return c.json({ error: 'name_cannot_be_changed' }, 409)
+    const value = b.value === undefined ? it.value : String(b.value).trim()
+    if (b.value !== undefined && (!isLink(value) || value.length > 500)) return c.json({ error: 'value_must_be_a_link' }, 400)
+    db.prepare('UPDATE items SET value = ?, rule = ? WHERE user_id = ? AND id = ?').run(value, b.rule ?? it.rule, owner, id)
+    return c.json({ id, label: it.label, value, rule: b.rule ?? it.rule })
   })
 
   return app
