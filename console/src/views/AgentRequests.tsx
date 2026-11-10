@@ -42,7 +42,7 @@ async function call(path: string, body?: unknown): Promise<any> {
     body: body ? JSON.stringify(body) : undefined,
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error_description ?? data.error ?? `${path}: ${res.status}`)
+  if (!res.ok) throw Object.assign(new Error(data.error_description ?? data.error ?? `${path}: ${res.status}`), { status: data.status })
   return data
 }
 
@@ -57,16 +57,23 @@ const dropCode = () => {
 }
 
 // The linked request first, then oldest first, missions before held requests; the mock console has no /agent, so it stays empty there.
-export function useAgentRequests(): { pending: AgentRequest[]; refresh: () => void; codeError: string | null } {
+export interface CodeNotice { text: string; error: boolean }
+
+export function useAgentRequests(): { pending: AgentRequest[]; refresh: () => void; codeNotice: CodeNotice | null } {
   const [pending, setPending] = useState<AgentRequest[]>([])
   const [code, setCode] = useState(linkCode)
-  const [codeError, setCodeError] = useState<string | null>(null)
+  const [codeNotice, setCodeNotice] = useState<CodeNotice | null>(null)
   const refresh = useCallback(() => {
     if (import.meta.env.VITE_API !== 'live') return
     const linked: Promise<AgentRequest | null> = code
       ? call(`/agent/code/${encodeURIComponent(code)}`).then(
         (r: AgentRequest) => r,
-        (e: Error) => { setCodeError(e.message); setCode(null); dropCode(); return null },
+        (e: Error & { status?: string }) => {
+          setCodeNotice({ text: e.message, error: e.status !== 'approved' && e.status !== 'denied' })
+          setCode(null)
+          dropCode()
+          return null
+        },
       )
       : Promise.resolve(null)
     Promise.all([linked, call('/agent/state').catch(() => ({}))]).then(
@@ -83,7 +90,7 @@ export function useAgentRequests(): { pending: AgentRequest[]; refresh: () => vo
     return () => clearInterval(t)
   }, [refresh])
   const done = useCallback(() => { if (code) { setCode(null); dropCode() } refresh() }, [code, refresh])
-  return { pending, refresh: done, codeError }
+  return { pending, refresh: done, codeNotice }
 }
 
 function useDecision(path: string, refresh: () => void) {

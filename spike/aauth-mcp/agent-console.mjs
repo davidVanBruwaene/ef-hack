@@ -92,12 +92,23 @@ function miss(req) {
   misses.set(k, m && m.since > Date.now() - MISS_WINDOW ? { ...m, n: m.n + 1 } : { since: Date.now(), n: 1 })
 }
 
+// A used or expired code; only the member it belongs to learns how it ended.
+function answered(b, who) {
+  if (b?.member !== who.id || !['approved', 'denied', 'expired'].includes(b.status)) {
+    return { error: 'invalid_code', error_description: 'that code was already answered, or its request expired' }
+  }
+  const what = b.kind === 'review' ? 'request' : 'mission'
+  const when = b.decided_at ? ` at ${new Date(b.decided_at).toISOString().slice(11, 16)} UTC` : ''
+  const error_description = b.status === 'expired' ? `This ${what} expired before anyone answered it. Your agent can ask again.` : `You ${b.status} this ${what}${when}.`
+  return { error: 'invalid_code', status: b.status, decided_at: b.decided_at, error_description }
+}
+
 // The request an agent's code names, if this member may answer it: an unbound agent's mission, or one of their own.
 async function byCode(req, res, who, code) {
   if (limited(req)) return json(res, 429, { error: 'too_many_codes', error_description: 'too many wrong codes; wait fifteen minutes' })
   const r = await ps(`/codes/${encodeURIComponent(code)}`)
   if (r.status === 404) { miss(req); return json(res, 404, { error: 'not_found', error_description: 'no request is waiting for that code' }) }
-  if (r.status === 410) return json(res, 410, { error: 'invalid_code', error_description: 'that code was already answered, or its request expired' })
+  if (r.status === 410) return json(res, 410, answered(r.body, who))
   if (r.status !== 200) return unreachable(res, r)
   const { kind, mission, review, owner } = r.body
   const mine = kind === 'review' ? mission?.person?.id === who.id : !owner || owner.id === who.id

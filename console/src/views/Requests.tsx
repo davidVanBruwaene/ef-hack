@@ -32,9 +32,10 @@ export function Requests({ state, groups, refresh, focus }: Props) {
   if (!group) {
     return (
       <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-8">
-        {agent.codeError ? (
-          <Alert variant="destructive">
-            <AlertDescription>{agent.codeError}</AlertDescription>
+        {agent.codeNotice ? (
+          <Alert variant={agent.codeNotice.error ? 'destructive' : 'default'}>
+            {agent.codeNotice.error ? null : <CheckIcon />}
+            <AlertDescription>{agent.codeNotice.text}</AlertDescription>
           </Alert>
         ) : null}
         <Card>

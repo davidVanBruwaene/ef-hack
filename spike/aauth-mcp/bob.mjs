@@ -265,7 +265,11 @@ async function api(req, res, url) {
     const x = state.byCode(code)
     if (!x) return reply(404, { error: 'not_found' })
     // §11.9.4: a code already answered, or whose request expired, is invalid_code.
-    if (!state.isOpen(x)) return reply(410, { error: 'invalid_code', status: x.status })
+    if (!state.isOpen(x)) {
+      const mission = x.scopes ? state.mission(x.mission) : x
+      const member = mission?.person?.id ?? state.ownerOf(mission?.agent)?.id ?? null
+      return reply(410, { error: 'invalid_code', kind: x.scopes ? 'review' : 'mission', status: x.status === 'pending' ? 'expired' : x.status, decided_at: x.decided_at ?? null, member })
+    }
     return reply(200, x.scopes ? { kind: 'review', review: x, mission: state.mission(x.mission) } : { kind: 'mission', mission: x, owner: state.ownerOf(x.agent) ?? null })
   }
   if (req.method === 'GET' && url.pathname === '/api/subjects') {
