@@ -59,7 +59,6 @@ npm run demo       # builds the console, then runs the store, the world, the con
 Each person opens `https://<RP_ID>/` on their phone and creates an account with a passkey, once. Then, in a second terminal in `spike/aauth-mcp`:
 
 ```bash
-npm run member-map -- <your first name>             # once, after your account exists: the directory's map until linking replaces it
 npm run mission -- "<what your agent should do>"    # open the link it prints, signed in; the first approval makes the agent yours
 npm run mcp-config
 claude --mcp-config mcp.json --strict-mcp-config --allowedTools mcp__alice__find_people,mcp__alice__search_context

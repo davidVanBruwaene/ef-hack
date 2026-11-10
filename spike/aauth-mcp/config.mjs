@@ -11,7 +11,10 @@ const identifier = (name, fallback) => (process.env[name] || fallback).replace(/
 export const PS = identifier('AAUTH_PS', 'https://ps.aauth.test')
 export const RESOURCE = identifier('AAUTH_RESOURCE', 'https://alice.aauth.test')
 export const AGENT = identifier('AAUTH_AGENT', 'https://bob-agent.aauth.test')
-export const AGENT_SUB = `aauth:claude@${new URL(AGENT).hostname}`
+// AAUTH_AGENT_NAME tells apart local agents on one machine, such as two MCP clients each running proxy.mjs.
+const AGENT_NAME = process.env.AAUTH_AGENT_NAME || 'claude'
+if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(AGENT_NAME)) throw new Error(`AAUTH_AGENT_NAME must be lowercase letters, digits and hyphens; got ${AGENT_NAME}`)
+export const AGENT_SUB = `aauth:${AGENT_NAME}@${new URL(AGENT).hostname}`
 export const DEFAULT_MISSION = 'I met Alice at the hackathon. Check whether we should talk, and if so book 30 minutes.'
 
 const port = (name, fallback) => Number(process.env[name]) || fallback

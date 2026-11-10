@@ -28,7 +28,7 @@ export function openBobState() {
   const saved = file.load()
   const s = {
     missions: saved.missions ?? [], reviews: saved.reviews ?? [], log: saved.log ?? [],
-    agents: saved.agents ?? {},
+    agents: saved.agents ?? {}, subjects: saved.subjects ?? {},
   }
   let rev = 0
   const listeners = new Set()
@@ -53,6 +53,8 @@ export function openBobState() {
     blob: m => (m?.blob_b64 ? JSON.parse(Buffer.from(m.blob_b64, 'base64url').toString('utf8')) : undefined),
     // The member an agent was bound to when its first mission was approved.
     ownerOf: agent => s.agents[agent],
+    // The member each pairwise sub stands for at each resource, so a resource this server trusts can ask.
+    subject: (aud, sub) => s.subjects[`${aud} ${sub}`],
     isOpen,
     expired: m => Date.parse(m.expires_at) <= Date.now(),
     // The log decide() reads: its decisions and the member's answers for this mission, oldest first.
@@ -114,6 +116,13 @@ export function openBobState() {
     },
 
     record(entry) { log(entry); changed() },
+
+    noteSubject(aud, sub, person) {
+      const key = `${aud} ${sub}`
+      if (s.subjects[key]?.id === person.id) return
+      s.subjects[key] = { id: person.id, name: person.name }
+      changed()
+    },
 
     openReview({ mission, agent, resource, scopes, acts, justification, verdicts }) {
       const r = {
