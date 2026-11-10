@@ -31,7 +31,12 @@ export function Requests({ state, groups, refresh, focus }: Props) {
 
   if (!group) {
     return (
-      <main className="mx-auto w-full max-w-2xl px-4 py-8">
+      <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-8">
+        {agent.codeError ? (
+          <Alert variant="destructive">
+            <AlertDescription>{agent.codeError}</AlertDescription>
+          </Alert>
+        ) : null}
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
             <div className="flex size-12 items-center justify-center rounded-full bg-muted">

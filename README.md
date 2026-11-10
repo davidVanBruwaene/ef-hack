@@ -13,8 +13,7 @@ cd spike/aauth-mcp
 npm ci --ignore-scripts
 npm run world      # leave it running
 npm run check      # in a second terminal
-npm run pair       # once: a QR code signs Bob's phone in to his person server
-npm run mission    # before using it from Claude Code: Bob approves the mission from a QR code
+npm run mission    # before using it from Claude Code: a member approves the mission at /api, or in the console when RP_ID is set
 npm run check:network  # the people network against a throwaway store; needs npm ci in store/ first
 ```
 
@@ -40,15 +39,15 @@ Set `VITE_API=live` (and `VITE_API_TARGET` for the server's URL) to use the real
 
 In live mode the dev server also sends the store's routes (`/auth`, `/me`, `/network`, `/invite`, `/join`, `/pair`, `/dev`) to `VITE_STORE_TARGET` (default `http://localhost:8790`). The console then signs in with the store's passkeys and edits the items there, while requests and activity still come from `/api`. Behind a tunnel, set `PUBLIC_URL` to the console's public URL so Vite accepts that hostname, and start the store with the same URL in `RP_ORIGINS` and the hostname in `RP_ID`.
 
-Behind the tunnel, Alice and Bob use the same console. Build it with `VITE_API=live npm run build` in `console/`, then run `npm run console` in `spike/aauth-mcp` (port 4531, with `STORE_URL` and `MEMBER_MAP` set as for Alice's server). It serves the build and adds the missions and held requests that wait for Bob at his person server. [spike/aauth-mcp/two-laptops.md](spike/aauth-mcp/two-laptops.md) covers the tunnel.
+Behind the tunnel, Alice and Bob use the same console. Build it with `VITE_API=live npm run build` in `console/`, then run `npm run console` in `spike/aauth-mcp` (port 4531, with `STORE_URL` set as for Alice's server). It serves the build and adds, for whoever is signed in, the missions and held requests their agents wait on at the person server. [spike/aauth-mcp/two-laptops.md](spike/aauth-mcp/two-laptops.md) covers the tunnel.
 
 On two laptops, run `npm run bob` on one and `npm run alice` on the other, behind a Cloudflare Tunnel. The spike README covers the setup.
 
-**The two-person demo on one laptop.** Bob's agent, Claude Code, finds another member of the people network and asks for what they share. Bob answers for his agent on his phone, and the other member answers in the console on theirs. Once per laptop:
+**The network on one machine.** A member's agent, Claude Code, finds another member of the people network and asks for what they share. Every member signs in to the same console with their passkey: there they answer their own agent's missions and held requests, and the asks other agents send them. Once per laptop:
 
 1. Run `npm ci` in `store/` and `console/`, and `npm ci --ignore-scripts` in `spike/aauth-mcp`.
 2. Create both tunnels and write both configs on this laptop, as in "Once per laptop" in [spike/aauth-mcp/two-laptops.md](spike/aauth-mcp/two-laptops.md). Alice's takes `--console 4531 --store 8790`, or `CONSOLE_PORT` and `STORE_PORT` if you set them.
-3. In `.env` at the repo root, set `AAUTH_PS`, `AAUTH_AGENT` and `AAUTH_RESOURCE` to the tunnel hostnames, `RP_ID` to the console's hostname, `BOB_NAME` to Bob's first name, and `TUNNEL_CONFIGS` to the two config files.
+3. In `.env` at the repo root, set `AAUTH_PS`, `AAUTH_AGENT` and `AAUTH_RESOURCE` to the tunnel hostnames, `RP_ID` to the console's hostname, and `TUNNEL_CONFIGS` to the two config files.
 
 Each run, in `spike/aauth-mcp`:
 
@@ -59,14 +58,13 @@ npm run demo       # builds the console, then runs the store, the world, the con
 Each person opens `https://<RP_ID>/` on their phone and creates an account with a passkey, once. Then, in a second terminal in `spike/aauth-mcp`:
 
 ```bash
-npm run member-map -- <Bob's first name>           # once, after Bob's account exists
-npm run pair                                        # Bob scans it, and that phone browser answers for his agent
-npm run mission -- "<what Bob's agent should do>"   # Bob approves it in the same phone browser
+npm run member-map -- <your first name>             # once, after your account exists: the directory's map until linking replaces it
+npm run mission -- "<what your agent should do>"    # open the link it prints, signed in; the first approval makes the agent yours
 npm run mcp-config
 claude --mcp-config mcp.json --strict-mcp-config --allowedTools mcp__alice__find_people,mcp__alice__search_context
 ```
 
-Requests that Bob's supervisor holds wait for him at `/bob` on his person server, in that browser. The other member answers asks in the console, under Requests.
+Requests the supervisor holds wait for the agent's member in the console, and the other member answers asks there too, under Requests.
 
 Keep this section current: anyone should be able to run main from a fresh clone.
 

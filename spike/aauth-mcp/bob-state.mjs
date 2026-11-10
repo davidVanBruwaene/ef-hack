@@ -1,17 +1,15 @@
-// Bob's state at his person server: the missions his agent proposed, the requests held for his review, his answers, the mission log, and his paired phones.
+// The person server's state: the missions agents proposed, the member each mission and agent belongs to, requests held for review, the answers, and the mission log.
 import { randomBytes } from 'node:crypto'
 import { bearerToken, jsonFile, now, randomId, sha256 } from './store.mjs'
 
 export { tokenMatches } from './store.mjs'
 
-// Bearer token for Bob's /api: BOB_CONSOLE_TOKEN, or one generated into .keys/bob-console-token.
+// Bearer token for the person server's /api, which the console server calls for the member signed in: BOB_CONSOLE_TOKEN, or one generated into .keys/bob-console-token.
 export const consoleToken = () => bearerToken('BOB_CONSOLE_TOKEN', 'bob-console-token')
 
 const MISSION_HOURS = 24
-// A proposal or held request waits this long for Bob, as long as @aauth/agent polls by default.
+// A proposal or held request waits this long for its member, as long as @aauth/agent polls by default.
 const PENDING_MINUTES = 15
-const PAIR_MINUTES = 10
-const SESSION_DAYS = 7
 
 // -11 §11.6.3.1: Crockford base32, ten symbols (50 bits), shown in two groups of five.
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
@@ -30,7 +28,7 @@ export function openBobState() {
   const saved = file.load()
   const s = {
     missions: saved.missions ?? [], reviews: saved.reviews ?? [], log: saved.log ?? [],
-    pairings: saved.pairings ?? [], sessions: saved.sessions ?? [],
+    agents: saved.agents ?? {},
   }
   let rev = 0
   const listeners = new Set()
@@ -53,12 +51,12 @@ export function openBobState() {
     byCode: input => { const v = codeValue(input); return (v && all().find(x => codeValue(x.code) === v)) || undefined },
     byS256: s256 => (s256 && s.missions.find(m => m.s256 === s256)) || undefined,
     blob: m => (m?.blob_b64 ? JSON.parse(Buffer.from(m.blob_b64, 'base64url').toString('utf8')) : undefined),
+    // The member an agent was bound to when its first mission was approved.
+    ownerOf: agent => s.agents[agent],
     isOpen,
     expired: m => Date.parse(m.expires_at) <= Date.now(),
-    // The log decide() reads: its decisions and Bob's answers for this mission, oldest first.
+    // The log decide() reads: its decisions and the member's answers for this mission, oldest first.
     missionLog: s256 => s.log.filter(e => e.mission_s256 === s256 && e.act),
-    open: () => all().filter(isOpen).sort((a, b) => a.created_at.localeCompare(b.created_at)),
-    active: () => s.missions.filter(m => m.status === 'approved' && isFuture(m.expires_at)).reverse(),
 
     useCode(x) { x.code_used_at = now(); changed() },
 
@@ -74,15 +72,18 @@ export function openBobState() {
     },
 
     // The blob's exact bytes are kept, so s256 can be recomputed; supervisor: 'rules' keeps the mission away from Jev.
-    decide(id, decision, editedDescription, { supervisor } = {}) {
+    decide(id, decision, editedDescription, { supervisor, member } = {}) {
       const m = s.missions.find(x => x.id === id)
       if (!m || !isOpen(m)) return m
       settle(m)
+      m.person = { id: member.id, name: member.name }
       if (decision === 'approve') {
+        s.agents[m.agent] ??= { ...m.person, bound_at: now() }
         if (supervisor === 'rules') m.supervisor = 'rules'
         const approvedAt = new Date()
         const blob = {
           agent: m.agent,
+          person: m.person.name,
           approved_at: approvedAt.toISOString(),
           expires_at: new Date(approvedAt.getTime() + MISSION_HOURS * 3600_000).toISOString(),
           description: editedDescription?.trim() || m.description,
@@ -97,7 +98,7 @@ export function openBobState() {
       } else {
         m.status = 'denied'
       }
-      log({ mission: m.id, mission_s256: m.s256, event: m.status, decided_by: 'Bob', detail: m.approved_description ?? '' })
+      log({ mission: m.id, mission_s256: m.s256, event: m.status, decided_by: m.person.name, detail: m.approved_description ?? '' })
       changed()
       return m
     },
@@ -115,44 +116,29 @@ export function openBobState() {
       return r
     },
 
-    decideReview(id, decision) {
+    decideReview(id, decision, member) {
       const r = s.reviews.find(x => x.id === id)
       if (!r || !isOpen(r)) return r
       settle(r)
+      r.decided_by = member.name
       r.status = decision === 'approve' ? 'approved' : 'denied'
       for (const act of r.acts ?? []) {
-        log({ mission: r.mission, mission_s256: r.mission_s256, event: 'review_answered', act, decision: r.status === 'approved' ? 'ALLOW' : 'DENY', by: 'Bob' })
+        log({ mission: r.mission, mission_s256: r.mission_s256, event: 'review_answered', act, decision: r.status === 'approved' ? 'ALLOW' : 'DENY', by: member.name })
       }
       changed()
       return r
     },
 
-    // A one-time link that signs a browser in as Bob; only its hash is kept.
-    newPairing() {
-      const code = newCode()
-      const p = { hash: sha256(codeValue(code)), expires_at: later(PAIR_MINUTES) }
-      s.pairings = [...s.pairings.filter(x => !x.used_at && isFuture(x.expires_at)), p]
-      changed()
-      return { code, expires_at: p.expires_at }
+    // One member's missions and held requests, including proposals from agents bound to them; everything when no member is named.
+    view(member) {
+      const mine = m => !member || m.person?.id === member || (!m.person && s.agents[m.agent]?.id === member)
+      const missions = s.missions.filter(mine)
+      const ids = new Set(missions.map(m => m.id))
+      return {
+        missions: [...missions].reverse(),
+        reviews: s.reviews.filter(r => ids.has(r.mission)).reverse(),
+        log: s.log.filter(e => !member || ids.has(e.mission)).reverse(),
+      }
     },
-
-    pair(input, label) {
-      const p = s.pairings.find(x => x.hash === sha256(codeValue(input)) && !x.used_at && isFuture(x.expires_at))
-      if (!p) return undefined
-      p.used_at = now()
-      const id = randomBytes(32).toString('base64url')
-      s.sessions = [...s.sessions.filter(x => isFuture(x.expires_at)), { hash: sha256(id), label, created_at: now(), expires_at: later(SESSION_DAYS * 1440) }]
-      log({ event: 'paired', detail: label })
-      changed()
-      return id
-    },
-
-    session: id => (id && s.sessions.find(x => x.hash === sha256(id) && isFuture(x.expires_at))) || undefined,
-
-    view: () => ({
-      missions: [...s.missions].reverse(),
-      reviews: [...s.reviews].reverse(),
-      log: [...s.log].reverse(),
-    }),
   }
 }

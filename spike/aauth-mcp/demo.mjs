@@ -1,11 +1,10 @@
-// Runs the two-person demo on one laptop: the passkey store, the people-mode world, the console server, and each cloudflared config in TUNNEL_CONFIGS. Usage: node demo.mjs
+// Runs the network on one machine: the passkey store, the people-mode world, the console server, and each cloudflared config in TUNNEL_CONFIGS. Usage: node demo.mjs
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 import { connect } from 'node:net'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { BOB_NAME, LOOPBACK, PORTS, PS } from './config.mjs'
-import { memberMap } from './people.mjs'
+import { LOOPBACK, PORTS, PS } from './config.mjs'
 import { bearerToken } from './store.mjs'
 
 const fail = msg => { console.error(`✗ ${msg}`); process.exit(1) }
@@ -23,7 +22,7 @@ const CONSOLE_PORT = Number(env.CONSOLE_PORT) || 4531
 const CONSOLE_URL = `https://${env.RP_ID}`
 const STORE_URL = `http://127.0.0.1:${STORE_PORT}`
 const STORE_INTERNAL_TOKEN = bearerToken('STORE_INTERNAL_TOKEN', 'store-internal-token')
-// Created here so the world and the console server read one Bob token instead of racing to generate two.
+// Created here so the world and the console server read one token instead of racing to generate two.
 bearerToken('BOB_CONSOLE_TOKEN', 'bob-console-token')
 bearerToken('ALICE_CONSOLE_TOKEN', 'alice-console-token')
 const MEMBER_MAP = env.MEMBER_MAP || at('.keys/member-map.json')
@@ -35,7 +34,7 @@ const listening = port => new Promise(resolve => {
   const socket = connect(port, '127.0.0.1', () => { socket.end(); resolve(true) })
   socket.on('error', () => resolve(false))
 })
-const ports = [STORE_PORT, PORTS.ps, PORTS.resource, PORTS.agent, PORTS.mockin, CONSOLE_PORT]
+const ports = [STORE_PORT, PORTS.ps, PORTS.resource, PORTS.agent, CONSOLE_PORT]
 const taken = (await Promise.all(ports.map(listening))).map((on, i) => on && ports[i]).filter(Boolean)
 if (taken.length) fail(`port ${taken.join(', ')} already in use; stop the other world, store or console first`)
 
@@ -49,7 +48,7 @@ try {
 
 const children = []
 let stopping = false
-// Each child leads its own process group, so stopping it also stops what it started, such as the world's mockin.
+// Each child leads its own process group, so stopping it also stops what it started.
 function stop(code) {
   if (stopping) return
   stopping = true
@@ -82,7 +81,7 @@ start('store', process.execPath, ['--disable-warning=ExperimentalWarning', 'src/
   env: { ...env, STORE_PORT: String(STORE_PORT), RP_ORIGINS: env.RP_ORIGINS || CONSOLE_URL, PUBLIC_URL: env.PUBLIC_URL || CONSOLE_URL, STORE_INTERNAL_TOKEN },
 })
 start('world', process.execPath, ['world.mjs'], { cwd: at('./'), env: { ...env, STORE_URL, STORE_INTERNAL_TOKEN, MEMBER_MAP } })
-start('console', process.execPath, ['agent-console.mjs', '--port', String(CONSOLE_PORT)], { cwd: at('./'), env: { ...env, STORE_URL, MEMBER_MAP } })
+start('console', process.execPath, ['agent-console.mjs', '--port', String(CONSOLE_PORT)], { cwd: at('./'), env: { ...env, STORE_URL } })
 for (const file of tunnels) start('tunnel', 'cloudflared', ['tunnel', '--config', file, 'run'], { env })
 
 async function allListening() {
@@ -96,16 +95,13 @@ async function allListening() {
 if (!(await allListening())) {
   if (!stopping) { console.error('✗ not every server was listening after 60 s; stopping'); stop(1) }
 } else {
-  let mapped
-  try { mapped = memberMap(MEMBER_MAP)()[PS] } catch {}
   console.log(`
-✓ The demo is up. The console is ${CONSOLE_URL}/${tunnels.length ? '' : ' once your tunnels run (TUNNEL_CONFIGS is unset)'}
-Each person opens it on their phone and creates an account with a passkey, once. Then, in spike/aauth-mcp:
-  ${mapped ? `# MEMBER_MAP already names ${BOB_NAME}'s member` : `npm run member-map -- ${BOB_NAME}`}
-  npm run pair
-  npm run mission -- "<what ${BOB_NAME}'s agent should do>"
+✓ Up. The console is ${CONSOLE_URL}/${tunnels.length ? '' : ' once your tunnels run (TUNNEL_CONFIGS is unset)'}
+Each member creates an account there with a passkey, once. To run an agent, in spike/aauth-mcp:
+  npm run member-map -- <first name>   # who the directory takes this agent's requests to be from, until linking replaces MEMBER_MAP
+  npm run mission -- "<what the agent should do>"
   npm run mcp-config
   claude --mcp-config mcp.json --strict-mcp-config --allowedTools mcp__alice__find_people,mcp__alice__search_context
-Ctrl-C stops everything.
+The member who approves an agent's first mission in the console owns that agent. Ctrl-C stops everything.
 `)
 }

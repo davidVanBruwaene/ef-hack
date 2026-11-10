@@ -1,10 +1,10 @@
-// Proposes a mission as Bob's agent, shows Bob the approval link as a QR code, and saves it for proxy.mjs. Usage: node mission.mjs ["<text>"], with the text required on the people network
+// Proposes a mission as the agent, shows its member the approval link as a QR code, and saves it for proxy.mjs. Usage: node mission.mjs ["<text>"], with the text required on the people network
 import QRCode from 'qrcode'
-import { BOB_NAME, DEFAULT_MISSION, LOOPBACK, PS } from './config.mjs'
+import { DEFAULT_MISSION, LOOPBACK, PS } from './config.mjs'
 import { requestMission, saveMission } from './missions.mjs'
 
 if (!process.argv[2] && (process.env.RP_ID || process.env.STORE_URL)) {
-  console.error(`✗ Say what ${BOB_NAME}'s agent should do: npm run mission -- "<text>". The default mission is about alice.json's Alice, who is not on the people network.`)
+  console.error(`✗ Say what the agent should do: npm run mission -- "<text>". The default mission is about alice.json's Alice, who is not on the people network.`)
   process.exit(1)
 }
 const description = process.argv[2] ?? DEFAULT_MISSION
@@ -15,9 +15,8 @@ const m = await requestMission(description, {
     const link = `${url}?code=${encodeURIComponent(code)}`
     console.log(await QRCode.toString(link, { type: 'terminal', small: true }))
     const port = LOOPBACK[new URL(url).hostname]
-    const local = port ? `\nOn this machine: http://127.0.0.1:${port}/interact?code=${encodeURIComponent(code)}` : ''
-    console.log(`Bob: scan the code with a phone signed in through npm run pair, or open ${link}${local}\n(code ${code}). Waiting for your answer…`)
-    if (process.env.RP_ID) console.log(`Or answer in the console: https://${process.env.RP_ID.trim()}/`)
+    const local = port ? `\nOn this machine: http://127.0.0.1:${port}${new URL(url).pathname}?code=${encodeURIComponent(code)}` : ''
+    console.log(`Open ${link} on a phone signed in to the console, or scan the code${local}\n(code ${code}). Waiting for an answer…`)
   },
 }).catch(err => { console.error(`✗ ${err.message}`); process.exit(1) })
 
