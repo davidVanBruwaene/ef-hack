@@ -43,6 +43,18 @@ function badRedirect(uri) {
   return null
 }
 
+// RFC 8252 §7.3: a loopback redirect matches a registered one on any port; every other redirect matches exactly.
+function registered(uris, uri) {
+  if (uris.includes(uri)) return true
+  let u
+  try { u = new URL(uri) } catch { return false }
+  if (u.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)) return false
+  u.port = ''
+  return uris.some(entry => {
+    try { const e = new URL(entry); e.port = ''; return e.href === u.href } catch { return false }
+  })
+}
+
 async function formOrJson(req) {
   const raw = (await readBody(req)).toString('utf8')
   if (/^application\/json\b/i.test(req.headers['content-type'] ?? '')) { try { return JSON.parse(raw || '{}') } catch { return null } }
@@ -146,7 +158,7 @@ export function openGateway({ origin, memberOf, memberGone = async () => false, 
     const plain = (status, text) => { res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }); res.end(`${text}\n`) }
     if (!client) return plain(400, 'Unknown client_id.')
     const redirect = q.redirect_uri ?? (client.redirect_uris.length === 1 ? client.redirect_uris[0] : undefined)
-    if (!redirect || !client.redirect_uris.includes(redirect)) return plain(400, 'redirect_uri is not one this client registered.')
+    if (!redirect || !registered(client.redirect_uris, redirect)) return plain(400, 'redirect_uri is not one this client registered.')
     const back = (error, description) => {
       const u = new URL(redirect)
       u.searchParams.set('error', error)
