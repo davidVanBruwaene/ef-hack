@@ -63,7 +63,7 @@ const reply = body => ({ content: [{ type: 'text', text: JSON.stringify(body, nu
 const failed = body => ({ ...reply(body), isError: true })
 
 // memberOf(req) is the store's member for the request's cookie; ps(path, body) calls the person server's /api.
-export function openGateway({ origin, memberOf, ps, fromConsole, log }) {
+export function openGateway({ origin, memberOf, memberGone = async () => false, ps, fromConsole, log }) {
   routeTestHostsToLoopback()
   const file = jsonFile('gateway-state.json')
   const saved = file.load()
@@ -236,7 +236,7 @@ export function openGateway({ origin, memberOf, ps, fromConsole, log }) {
       if (body.redirect_uri && body.redirect_uri !== c.redirect) return oauthError(res, 400, 'invalid_grant', 'redirect_uri does not match')
       if (typeof body.code_verifier !== 'string' || sha256(body.code_verifier) !== c.challenge) return oauthError(res, 400, 'invalid_grant', 'code_verifier does not match the code_challenge')
       const conn = s.connections[c.connection]
-      if (!conn || conn.revoked_at) return oauthError(res, 400, 'invalid_grant', 'the connection was revoked')
+      if (!(await live(conn))) return oauthError(res, 400, 'invalid_grant', 'the connection was revoked')
       return issue(res, conn, client.client_id)
     }
     if (body.grant_type === 'refresh_token') {
@@ -245,18 +245,31 @@ export function openGateway({ origin, memberOf, ps, fromConsole, log }) {
       if (!r || r.kind !== 'refresh' || r.exp <= epoch() || r.client_id !== client.client_id) return oauthError(res, 400, 'invalid_grant', 'the refresh token is unknown or expired')
       delete s.tokens[key]
       const conn = s.connections[r.connection]
-      if (!conn || conn.revoked_at) { save(); return oauthError(res, 400, 'invalid_grant', 'the connection was revoked') }
+      if (!(await live(conn))) { save(); return oauthError(res, 400, 'invalid_grant', 'the connection was revoked') }
       return issue(res, conn, client.client_id)
     }
     oauthError(res, 400, 'unsupported_grant_type')
   }
 
-  function bearer(req) {
+  // A connection whose member left the store is revoked on its next use.
+  async function live(conn) {
+    if (!conn || conn.revoked_at) return false
+    if (!(await memberGone(conn.member.id))) return true
+    for (const c of Object.values(s.connections)) {
+      if (c.member.id === conn.member.id && !c.revoked_at) Object.assign(c, { revoked_at: now(), revoked_because: 'member_deleted' })
+    }
+    for (const [k, v] of Object.entries(s.tokens)) if (s.connections[v.connection]?.revoked_at) delete s.tokens[k]
+    save()
+    log(`${conn.member.name}'s account is gone from the store; revoked their connections`)
+    return false
+  }
+
+  async function bearer(req) {
     const t = /^Bearer (.+)$/i.exec(req.headers.authorization ?? '')?.[1]
     const entry = t && s.tokens[sha256(t)]
     if (!entry || entry.kind !== 'access' || entry.exp <= epoch()) return null
     const conn = s.connections[entry.connection]
-    return conn && !conn.revoked_at ? conn : null
+    return (await live(conn)) ? conn : null
   }
 
   async function sessionOf(conn) {
@@ -343,7 +356,7 @@ export function openGateway({ origin, memberOf, ps, fromConsole, log }) {
 
   async function mcp(req, res) {
     if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end() }
-    const conn = bearer(req)
+    const conn = await bearer(req)
     if (!conn) {
       return send(res, 401, { error: 'invalid_token' }, { 'www-authenticate': `Bearer resource_metadata="${resourceMetadata}"` })
     }

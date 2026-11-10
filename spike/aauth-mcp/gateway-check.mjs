@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -257,6 +258,21 @@ try {
     check(forDana.includes(eli.id) && !forDana.includes(dana.id), `Dana's agent saw ${forDana}`)
     await elis.close()
     return "Eli's agent is Eli to the directory and Dana's is Dana: each sees the other, never themselves"
+  })
+
+  await step('member_deleted', async () => {
+    const fay = await signUp('Fay', 'Okafor', [])
+    const theirs = await connect(fay, "Fay's agent")
+    const ping = () => fetch(`${ORIGIN}/mcp`, { method: 'POST', headers: { authorization: `Bearer ${theirs.tokens.access_token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: '{"jsonrpc":"2.0","id":1,"method":"ping"}' })
+    check((await ping()).status === 200, 'Fay could not reach /mcp before her account was deleted')
+    const db = new DatabaseSync(join(TMP, 'store.db'))
+    db.exec('PRAGMA foreign_keys = ON')
+    db.prepare('DELETE FROM users WHERE id = ?').run(fay.id)
+    db.close()
+    check((await ping()).status === 401, 'after her account was deleted, /mcp still answered')
+    const r = await theirs.token({ grant_type: 'refresh_token', refresh_token: theirs.tokens.refresh_token, client_id: theirs.client_id })
+    check(r.status === 400, `after her account was deleted, refresh got ${r.status}`)
+    return "Fay's connection is revoked on its first use after her store account is gone"
   })
 
   await step('refresh', async () => {

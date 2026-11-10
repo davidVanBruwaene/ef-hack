@@ -13,14 +13,17 @@ export function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
   const [codes, setCodes] = useState<string[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [taken, setTaken] = useState<string | null>(null)
 
   async function guard(fn: () => Promise<void>) {
     setError(null)
+    setTaken(null)
     setBusy(true)
     try {
       await fn()
     } catch (e) {
-      setError((e as Error).message)
+      if ((e as { code?: string }).code === 'name_in_use') setTaken((e as Error).message)
+      else setError((e as Error).message)
     } finally {
       setBusy(false)
     }
@@ -88,17 +91,34 @@ export function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="first-name">First name</Label>
-                    <Input id="first-name" value={first} onChange={(e) => setFirst(e.target.value)} autoComplete="given-name" required />
+                    <Input id="first-name" value={first} onChange={(e) => { setFirst(e.target.value); setTaken(null) }} autoComplete="given-name" required />
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="last-name">Last name</Label>
-                    <Input id="last-name" value={last} onChange={(e) => setLast(e.target.value)} autoComplete="family-name" required />
+                    <Input id="last-name" value={last} onChange={(e) => { setLast(e.target.value); setTaken(null) }} autoComplete="family-name" required />
                   </div>
                 </div>
-                <Button type="submit" variant="outline" className="self-start" disabled={busy}>
-                  <UserPlusIcon className="size-4" />
-                  Create account
-                </Button>
+                {taken ? (
+                  <Alert>
+                    <AlertDescription className="flex flex-col gap-3">
+                      <span>{taken}</span>
+                      <span className="flex flex-wrap gap-2">
+                        <Button type="button" size="sm" disabled={busy} onClick={() => guard(async () => { await signIn(); onSignedIn() })}>
+                          <KeyRoundIcon className="size-4" />
+                          Sign in instead
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => guard(async () => setCodes(await register(first.trim(), last.trim(), true)))}>
+                          I am someone else with this name
+                        </Button>
+                      </span>
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <Button type="submit" variant="outline" className="self-start" disabled={busy}>
+                    <UserPlusIcon className="size-4" />
+                    Create account
+                  </Button>
+                )}
               </form>
             </CardContent>
           </Card>
