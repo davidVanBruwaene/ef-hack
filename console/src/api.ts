@@ -4,6 +4,7 @@ import { mockApi } from './mock'
 export interface Api {
   getState(): Promise<State>
   decideAsk(id: string, decision: 'approve' | 'deny', remember: boolean): Promise<void>
+  decideWrite(id: string, decision: 'approve' | 'deny'): Promise<void>
   setRequester(id: string, status: 'active' | 'revoked', label?: string): Promise<void>
   // Items live in the store (store/), not in the MCP server's /api.
   setRule(itemId: string, rule: Rule): Promise<void>
@@ -75,11 +76,15 @@ const liveApi: Api = {
             requesters: mcp.requesters,
             asks: mcp.asks.map((a) => ({ ...a, item_id: local(a.item_id) })),
             disclosures: mcp.disclosures.map((d) => ({ ...d, disclosed: (d.disclosed ?? []).map(local), withheld: (d.withheld ?? []).map(local) })),
+            writes: mcp.writes ?? [],
           }),
     }
   },
   decideAsk: async (id, decision, remember) => {
     await call(`/api/asks/${id}`, { decision, remember })
+  },
+  decideWrite: async (id, decision) => {
+    await call(`/api/writes/${id}`, { decision })
   },
   setRequester: async (id, status, label) => {
     await call(`/api/requesters/${id}`, { status, label })

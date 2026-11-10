@@ -81,6 +81,12 @@ export function Activity({ state, refresh }: { state: State; refresh: () => void
                   <span className="text-xs text-muted-foreground">{timeAgo(d.at)}</span>
                   <Badge variant="outline" className="ml-auto">Decided by {d.decided_by}</Badge>
                 </div>
+                {d.tool === 'update_context' ? (
+                  <div className="text-sm">
+                    Your agent: {d.query}
+                    {d.decisions ? <span className="text-muted-foreground"> ({Object.values(d.decisions).join(', ')})</span> : null}
+                  </div>
+                ) : (
                 <div className="flex flex-wrap items-center gap-1.5 text-sm">
                   {d.disclosed.length === 0 ? <span className="text-muted-foreground">Shared nothing</span> : null}
                   {d.disclosed.map((id) => (
@@ -90,6 +96,7 @@ export function Activity({ state, refresh }: { state: State; refresh: () => void
                     <Badge key={id} variant="outline" className="line-through">{label(id)}</Badge>
                   ))}
                 </div>
+                )}
               </li>
             ))}
           </ul>

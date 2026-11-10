@@ -57,6 +57,7 @@ export const mockApi: Api = {
     })
     emit()
   },
+  decideWrite: async () => {},
   setRequester: async (id, status, label) => {
     const r = state.requesters.find((x) => x.id === id)
     if (r) {

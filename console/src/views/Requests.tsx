@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { CheckIcon, InboxIcon, LinkIcon, QuoteIcon } from 'lucide-react'
 import { api } from '@/api'
-import type { State } from '@/types'
+import type { Rule, State, Write } from '@/types'
 import type { Group } from '@/lib/groups'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -28,6 +28,8 @@ export function Requests({ state, groups, refresh, focus }: Props) {
 
   // Your own agent's requests come first, unless you picked someone else's from the bell.
   if (own && !groups.some((g) => g.key === focus)) return <AgentRequestCard key={own.id} request={own} refresh={agent.refresh} />
+  const write = state.writes?.filter((w) => w.status === 'pending').at(-1)
+  if (write && !groups.some((g) => g.key === focus)) return <WriteCard key={write.id} write={write} refresh={refresh} />
 
   if (!group) {
     return (
@@ -159,6 +161,79 @@ function RequestCard({ group, state, refresh }: { group: Group; state: State; re
           <Button size="lg" className="flex-[2]" disabled={busy || count === 0} onClick={() => decide(true)}>
             <CheckIcon className="size-4" />
             {count === 0 ? 'Share nothing' : `Share ${count} of ${group.asks.length}`}
+          </Button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+const RULE_TEXT: Record<Rule, string> = { everyone: 'Everyone', ask: 'Ask me', only_me: 'Only me' }
+
+// Your own agent's change to what you share: exactly what it would save, before and after.
+function WriteCard({ write, refresh }: { write: Write; refresh: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const { before, after } = write
+
+  async function decide(decision: 'approve' | 'deny') {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.decideWrite(write.id, decision)
+      refresh()
+    } catch (e) {
+      setError((e as Error).message)
+      setBusy(false)
+    }
+  }
+
+  const row = (name: string, was: string | undefined, now: string) => (
+    <li className="flex flex-col gap-0.5 px-4 py-3">
+      <div className="text-xs font-medium text-muted-foreground">{name}</div>
+      {was !== undefined && was !== now ? <div className="break-all text-sm text-muted-foreground line-through">{was}</div> : null}
+      <div className="break-all text-sm">{now}</div>
+    </li>
+  )
+
+  return (
+    <>
+      <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 pb-28">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">{before ? `Your agent wants to change ${after.label}` : `Your agent wants to add ${after.label}`}</CardTitle>
+            <CardDescription className="truncate font-mono text-xs">{write.agent}</CardDescription>
+          </CardHeader>
+          {write.reason ? (
+            <CardContent>
+              <div className="flex gap-3 rounded-lg bg-muted p-3">
+                <QuoteIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <p className="min-w-0 text-sm leading-relaxed">{write.reason}</p>
+              </div>
+            </CardContent>
+          ) : null}
+        </Card>
+        <Card>
+          <CardContent className="p-0">
+            <ul className="divide-y">
+              {row('Label', undefined, after.label)}
+              {row('Link', before?.value, after.value)}
+              {row('Who sees it', before ? RULE_TEXT[before.rule] : undefined, RULE_TEXT[after.rule])}
+            </ul>
+          </CardContent>
+        </Card>
+        {error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+      </main>
+      <div className="fixed inset-x-0 bottom-0 z-10 border-t bg-background/95 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-2xl gap-3 px-4 py-3">
+          <Button variant="outline" size="lg" className="flex-1" disabled={busy} onClick={() => decide('deny')}>Decline</Button>
+          <Button size="lg" className="flex-[2]" disabled={busy} onClick={() => decide('approve')}>
+            <CheckIcon className="size-4" />
+            Save it
           </Button>
         </div>
       </div>

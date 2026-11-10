@@ -17,6 +17,8 @@ const log = logger('alice')
 // Kept under Cloudflare's 100 s origin timeout, so a held call answers before the tunnel drops it.
 const ASK_WAIT_MS = Number(process.env.ALICE_ASK_WAIT_S || 55) * 1000
 const BASE_SCOPE = 'context'
+const WRITE_SCOPE = 'context:write'
+const LINK = /^(https?:\/\/|mailto:|tel:)/i
 const itemScope = item => `item:${item.scope_id ?? item.id}`
 
 const state = openState(new URL('./alice.json', import.meta.url))
@@ -80,6 +82,7 @@ async function requiredScopes(rid, member, message, refused) {
     const items = people ? (await listing(args.person, member))?.items ?? [] : undefined
     for (const i of state.resolve(rid, args, items).items) if (i.rule !== 'everyone') scopes.add(itemScope(i))
   }
+  if (people && toolCalls(message, 'update_context').length) scopes.add(WRITE_SCOPE)
   return [BASE_SCOPE, ...[...scopes].filter(s => !refused.has(s))]
 }
 
@@ -197,6 +200,28 @@ async function answerSearch({ requester, agent, mission, scopes, refused, ids, q
   return text(out)
 }
 
+// Saves a write in the store and records it; the store's answer is the item as saved, or why not.
+async function applyWrite(w) {
+  const r = await (w.item_id ? people.changeItem(w.owner, w.item_id, { value: w.after.value, rule: w.after.rule }) : people.addItem(w.owner, w.after))
+    .catch(err => ({ error: err.code ?? err.message }))
+  const done = state.settleWrite(w.id, r)
+  state.disclose({
+    owner: w.owner, requester: w.requester, agent: w.agent, mission_s256: w.mission_s256, tool: 'update_context',
+    query: `${w.item_id ? 'change' : 'add'} ${done.item_id ?? w.after.label}`, disclosed: [], withheld: [],
+    decided_by: w.asked ? 'owner' : 'rule', reason: w.reason ?? '', decisions: { [done.item_id ?? w.after.label]: done.status },
+  })
+  log(`${w.item_id ? 'changed' : 'added'} ${done.item_id ?? w.after.label} for ${short(w.owner)}: ${done.status}${done.error ? ` (${done.error})` : ''}`)
+  return done
+}
+
+function writeAnswer(w) {
+  const item = { id: w.item_id ?? null, label: w.after.label, value: w.after.value, rule: w.after.rule }
+  if (w.status === 'saved') return text({ status: 'saved', item })
+  if (w.status === 'denied') return text({ status: 'declined', item, note: 'Your member declined this change.' })
+  if (w.status === 'failed') return failure(w.error ?? 'write_failed', `The store did not save it: ${w.error}.`)
+  return text({ status: 'pending', item, note: 'Your member has not answered in their Parley console yet. Call update_context again with the same arguments later.' })
+}
+
 function contextServer({ auth, requester, agent, scopes, refused }) {
   const server = new McpServer({ name: 'alice-context', version: '0.1.0' })
   const mission = auth.mission_s256 ?? ''
@@ -272,6 +297,42 @@ function networkServer({ auth, requester, member, agent, scopes, refused }) {
     if (!list) return failure('unknown_person', `No member ${person} in the network.`)
     return answerSearch({ requester, agent, mission, scopes, refused, ids, query, reason, list })
   })
+
+  server.registerTool('update_context', {
+    title: 'Add to or change what your person shares',
+    description: `Adds an item to the profile of the person you act for, or changes one of theirs, never anyone else's. Values are links (https:, mailto:, tel:). rule is who sees it: everyone, ask (they approve each request) or only_me, which is the default for a new item. A change that keeps the item visible to no one is saved at once; any other waits up to ${ASK_WAIT_MS / 1000} s for your person to confirm it in their Parley console, with exactly what you send. If it is still pending, call again with the same arguments later.`,
+    inputSchema: {
+      id: z.string().optional().describe('The id of one of your person\'s items, to change it; leave it out to add an item'),
+      label: z.string().optional().describe('The new item\'s label, such as LinkedIn; required to add, ignored when changing'),
+      value: z.string().optional().describe('The link: https://..., mailto:... or tel:...'),
+      rule: z.enum(RULES).optional().describe('Who sees it: everyone, ask or only_me'),
+      reason: z.string().optional().describe('Why you are making this change; your person reads it'),
+    },
+  }, async ({ id, label, value, rule, reason }) => {
+    if (!member) return notMember()
+    if (!scopes.includes(WRITE_SCOPE)) return failure('scope_required', `Writing needs ${WRITE_SCOPE}, which your person server did not grant under this mission.`)
+    const mine = await people.itemsOf(member, member)
+    const before = id ? mine.find(i => i.id === id) : null
+    if (id && !before) return failure('not_found', `Your person has no item ${id}. Leave id out to add one.`)
+    if (id && value === undefined && rule === undefined) return failure('invalid_request', 'Give a new value or rule.')
+    if (!id && (!label?.trim() || !value?.trim())) return failure('invalid_request', 'A new item needs a label and a value.')
+    if (value !== undefined && !LINK.test(value.trim())) return failure('value_must_be_a_link', 'The value must start with https://, http://, mailto: or tel:.')
+    const after = { label: before?.label ?? label.trim(), value: (value ?? before.value).trim(), rule: rule ?? before?.network_rule ?? 'only_me' }
+    const quiet = after.rule === 'only_me' && (!before || before.network_rule === 'only_me')
+    const w = state.proposeWrite({
+      owner: member, requester: requester.id, agent, mission_s256: mission, item_id: before?.id ?? null,
+      before: before ? { value: before.value, rule: before.network_rule } : null, after, reason: reason ?? '', asked: !quiet,
+    })
+    if (w.status === 'pending' && quiet) {
+      state.decideWrite(w.id, 'approve')
+      return writeAnswer(await applyWrite(w))
+    }
+    if (w.status === 'pending') {
+      log(`asking ${short(member)} to confirm ${w.item_id ? `a change to ${w.item_id}` : `a new item ${after.label}`}; holding the call up to ${ASK_WAIT_MS / 1000}s`)
+      await state.waitWrite(w.id, ASK_WAIT_MS)
+    }
+    return writeAnswer(state.write(w.id))
+  })
   return server
 }
 
@@ -322,7 +383,16 @@ async function consoleApi(req, res, url, token) {
   let body
   try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}') } catch { return reply(400, { error: 'invalid_json' }) }
   const bad = description => reply(400, { error: 'invalid_request', error_description: description })
-  const [, kind, id] = url.pathname.match(/^\/api\/(asks|requesters|items)(?:\/([\w-]+))?$/) ?? []
+  const [, kind, id] = url.pathname.match(/^\/api\/(asks|requesters|items|writes)(?:\/([\w-]+))?$/) ?? []
+
+  if (kind === 'writes' && id && people) {
+    if (!['approve', 'deny'].includes(body.decision)) return bad('decision must be approve or deny')
+    const w = state.decideWrite(id, body.decision, owner)
+    if (!w) return reply(404, { error: 'not_found' })
+    if (w.status === 'approved') await applyWrite(w)
+    log(`${who} ${body.decision === 'approve' ? 'approved' : 'declined'} write ${id}`)
+    return reply(200, { ok: true, write: state.write(id), rev: state.rev() })
+  }
 
   if (kind === 'asks') {
     const decisions = id ? [{ id, decision: body.decision, remember: body.remember }] : body.decisions

@@ -219,6 +219,19 @@ test('the MCP server can search and read an owner’s items on behalf of a membe
   const forBob = (await nobody.call('GET', `/internal/users/${a.id}/items?for=${b.id}`, undefined, auth)).json
   assert.deepEqual(forBob.find((i: Json) => i.id === 'calendar'), { id: 'calendar', label: 'Calendar', value: 'https://example.com/cal', network_rule: 'ask', rule: 'everyone' })
 
+  // Alice's server writes for an owner with the token and no Origin; values stay links and names stay fixed.
+  const bare = { ...auth, origin: '' }
+  assert.equal((await nobody.call('POST', `/internal/users/${a.id}/items`, { label: 'LinkedIn', value: 'https://linkedin.com/in/a' }, { origin: '' })).status, 401)
+  const added = await nobody.call('POST', `/internal/users/${a.id}/items`, { label: 'LinkedIn', value: 'https://linkedin.com/in/a' }, bare)
+  assert.deepEqual(added.json, { id: 'linkedin', label: 'LinkedIn', value: 'https://linkedin.com/in/a', rule: 'only_me' })
+  assert.equal((await nobody.call('POST', `/internal/users/${a.id}/items`, { label: 'Bad', value: 'javascript:alert(1)' }, bare)).status, 400)
+  const changed = await nobody.call('POST', `/internal/users/${a.id}/items/linkedin`, { value: 'https://linkedin.com/in/alice', rule: 'everyone' }, bare)
+  assert.deepEqual(changed.json, { id: 'linkedin', label: 'LinkedIn', value: 'https://linkedin.com/in/alice', rule: 'everyone' })
+  assert.equal((await nobody.call('POST', `/internal/users/${a.id}/items/first`, { value: 'https://x.example' }, bare)).status, 409)
+  assert.equal((await nobody.call('POST', `/internal/users/${a.id}/items/nope`, { rule: 'ask' }, bare)).status, 404)
+  assert.equal((await nobody.call('POST', `/internal/users/missing/items`, { label: 'X', value: 'https://x.example' }, bare)).json.error, 'unknown_member')
+  assert.equal((await alice.call('POST', '/me/items', { label: 'No origin', value: 'https://x.example' }, { origin: '' })).status, 403)
+
   // With no internal token configured the routes do not exist.
   const closed = createApp({ ...config, internalToken: undefined })
   assert.equal((await client(closed).call('GET', '/internal/search?as=x', undefined, auth)).status, 404)

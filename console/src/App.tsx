@@ -46,6 +46,7 @@ export default function App() {
   if (connecting && state) return <ConnectRequest id={connecting} />
 
   const groups = state ? pendingGroups(state) : []
+  const waiting = groups.length + (state?.writes?.filter((w) => w.status === 'pending').length ?? 0)
   const name = state ? `${state.owner.first_name} ${state.owner.last_name}` : ''
 
   return (
@@ -73,7 +74,7 @@ export default function App() {
               <TabsTrigger value="requests" className="gap-1.5">
                 <BellIcon className="size-4" />
                 Requests
-                {groups.length > 0 ? <Badge className="ml-1 h-5 min-w-5 px-1.5">{groups.length}</Badge> : null}
+                {waiting > 0 ? <Badge className="ml-1 h-5 min-w-5 px-1.5">{waiting}</Badge> : null}
               </TabsTrigger>
               <TabsTrigger value="shared" className="gap-1.5">
                 <SlidersHorizontalIcon className="size-4" />

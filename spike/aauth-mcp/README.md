@@ -84,7 +84,7 @@ claude -p "Use the alice server to see what Alice shares, then decide whether Bo
   --allowedTools mcp__alice__get_context_schema,mcp__alice__search_context
 ```
 
-On the people network the tools are `find_people` and `search_context`, so allow `mcp__alice__find_people,mcp__alice__search_context` instead.
+On the people network the tools are `find_people`, `search_context` and `update_context`, so allow `mcp__alice__find_people,mcp__alice__search_context,mcp__alice__update_context` instead.
 
 `alice.json` seeds Alice's name and items. Her state is kept in `.data/alice-state.json`: rules, requesters, asks and the disclosure log. Delete `.data/` to start over.
 
@@ -140,6 +140,9 @@ With `STORE_URL` set, `alice.mjs` serves every member of the passkey store (`sto
 |---|---|---|
 | `find_people` | `{query?}` | `{people: [{person, name, items: [{id, label, access}]}]}`, for members whose name or Everyone items match. `access` is `shared` or `ask`. No values, and never the caller |
 | `search_context` | `{person, ids?, query?, reason?}` | As with `alice.json`, for the member `person`, whose id the answer repeats |
+| `update_context` | `{id?, label?, value?, rule?, reason?}` | `{status, item}`. Adds an item to the caller's own profile, or changes one's value or rule; never another member's. `status` is `saved`, `pending`, `declined`, or an error |
+
+- `update_context` needs the scope `context:write`, which the person server grants when the mission names this server, as for `context`. A write whose result is visible to no one (Only me, on a new or Only me item) is saved at once. Any other write waits up to 55 s for the member to confirm its exact label, link and rule in the console; the agent calls again with the same arguments for one still pending. Each write lands in the disclosure log as tool `update_context`. The store saves it through `POST /internal/users/:id/items` and `POST /internal/users/:id/items/:item`.
 
 - Rules are the store's: each item's rule for everyone, or the rule its owner set for this caller. Only-me items never appear.
 - Item ids are the store's. Scopes name the owner readably, `item:<name>-<hex>/<item id>`: `<name>` is the owner's name in lowercase with hyphens, and `<hex>` is the first six hex digits of the member id. The console shows whose item each scope is, and his supervisor judges each owner's items apart.

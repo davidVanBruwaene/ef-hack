@@ -44,6 +44,7 @@ export function seedItems(db: DatabaseSync, userId: string, first: string, last:
 }
 
 const SAFE_VALUE = /^(https?:\/\/|mailto:|tel:)/i
+export const isLink = (v: string) => SAFE_VALUE.test(v)
 
 export function addItem(db: DatabaseSync, userId: string, label: string, value: string, rule: Rule = 'ask'): ItemRow | string {
   label = label.trim()

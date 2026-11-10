@@ -8,8 +8,8 @@ export function openPeople(env = process.env, { resolve } = {}) {
   const base = env.STORE_URL.replace(/\/+$/, '')
   const known = new Map()
 
-  async function call(path, headers) {
-    const res = await fetch(`${base}${path}`, { headers })
+  async function call(path, headers, payload) {
+    const res = await fetch(`${base}${path}`, payload === undefined ? { headers } : { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(payload) })
     const body = await res.json().catch(() => null)
     if (!res.ok) {
       const err = new Error(`store ${path.split('?')[0]} answered ${res.status}${body?.error ? ` ${body.error}` : ''}`)
@@ -17,7 +17,7 @@ export function openPeople(env = process.env, { resolve } = {}) {
     }
     return body
   }
-  const internal = path => call(path, { authorization: `Bearer ${env.STORE_INTERNAL_TOKEN}` })
+  const internal = (path, payload) => call(path, { authorization: `Bearer ${env.STORE_INTERNAL_TOKEN}` }, payload)
   const q = encodeURIComponent
 
   return {
@@ -36,6 +36,9 @@ export function openPeople(env = process.env, { resolve } = {}) {
     },
     search: (as, query = '') => internal(`/internal/search?as=${q(as)}&q=${q(query)}`),
     itemsOf: (owner, forMember) => internal(`/internal/users/${q(owner)}/items?for=${q(forMember)}`),
+    // An agent's write the member has allowed: a new item, or a changed value or rule.
+    addItem: (owner, { label, value, rule }) => internal(`/internal/users/${q(owner)}/items`, { label, value, rule }),
+    changeItem: (owner, id, change) => internal(`/internal/users/${q(owner)}/items/${q(id)}`, change),
     // The console sends the store's session cookie along with /api; the store says whose session it is.
     async signedIn(cookieHeader) {
       const sid = /(?:^|;\s*)sid=([^;]+)/.exec(cookieHeader ?? '')?.[1]
