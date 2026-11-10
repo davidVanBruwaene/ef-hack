@@ -1,6 +1,6 @@
 // Runs the network on one machine: the passkey store, the people-mode world, the console server, and each cloudflared config in TUNNEL_CONFIGS. Usage: node demo.mjs
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { connect } from 'node:net'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -25,8 +25,6 @@ const STORE_INTERNAL_TOKEN = bearerToken('STORE_INTERNAL_TOKEN', 'store-internal
 // Created here so the world and the console server read one token instead of racing to generate two.
 bearerToken('BOB_CONSOLE_TOKEN', 'bob-console-token')
 bearerToken('ALICE_CONSOLE_TOKEN', 'alice-console-token')
-const MEMBER_MAP = env.MEMBER_MAP || at('.keys/member-map.json')
-if (!MEMBER_MAP.trim().startsWith('{') && !existsSync(MEMBER_MAP)) writeFileSync(MEMBER_MAP, '{}\n', { mode: 0o600 })
 const tunnels = (env.TUNNEL_CONFIGS ?? '').split(',').map(s => s.trim().replace(/^~(?=\/)/, homedir())).filter(Boolean)
 for (const file of tunnels) if (!existsSync(file)) fail(`TUNNEL_CONFIGS names ${file}, which does not exist`)
 
@@ -80,7 +78,7 @@ start('store', process.execPath, ['--disable-warning=ExperimentalWarning', 'src/
   cwd: at('../../store/'),
   env: { ...env, STORE_PORT: String(STORE_PORT), RP_ORIGINS: env.RP_ORIGINS || CONSOLE_URL, PUBLIC_URL: env.PUBLIC_URL || CONSOLE_URL, STORE_INTERNAL_TOKEN },
 })
-start('world', process.execPath, ['world.mjs'], { cwd: at('./'), env: { ...env, STORE_URL, STORE_INTERNAL_TOKEN, MEMBER_MAP } })
+start('world', process.execPath, ['world.mjs'], { cwd: at('./'), env: { ...env, STORE_URL, STORE_INTERNAL_TOKEN } })
 start('console', process.execPath, ['agent-console.mjs', '--port', String(CONSOLE_PORT)], { cwd: at('./'), env: { ...env, STORE_URL } })
 for (const file of tunnels) start('tunnel', 'cloudflared', ['tunnel', '--config', file, 'run'], { env })
 
@@ -98,7 +96,6 @@ if (!(await allListening())) {
   console.log(`
 ✓ Up. The console is ${CONSOLE_URL}/${tunnels.length ? '' : ' once your tunnels run (TUNNEL_CONFIGS is unset)'}
 Each member creates an account there with a passkey, once. To run an agent, in spike/aauth-mcp:
-  npm run member-map -- <first name>   # who the directory takes this agent's requests to be from, until linking replaces MEMBER_MAP
   npm run mission -- "<what the agent should do>"
   npm run mcp-config
   claude --mcp-config mcp.json --strict-mcp-config --allowedTools mcp__alice__find_people,mcp__alice__search_context

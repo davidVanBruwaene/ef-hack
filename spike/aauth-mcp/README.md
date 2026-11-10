@@ -94,6 +94,8 @@ The console server calls it after checking the member's store sign-in. Every cal
 
 | Call | Body | Effect |
 |---|---|---|
+| `GET /api/subjects?aud=<resource>&sub=<sub>` | | `{member: {id, name}}`: the member behind a pairwise `sub` this server issued for that resource; `404` if none |
+| `POST /api/agents` | `{agent, member}` | Binds an unbound agent to the member, as the hosted endpoint does at connect; `403` if another member owns it |
 | `GET /api/state?member=<id>` | | `{missions, reviews, log, interact_url}` for that member's missions and their agents' proposals, newest first; every member's without `member` |
 | `GET /api/codes/{code}` | | The open request the code names, with the agent's owner if it has one; `410 invalid_code` once used |
 | `POST /api/missions/{id}` | `{decision: "approve" \| "deny", member, code?, description?, supervisor?: "rules"}` | Answers a proposal; `code` is required for an unbound agent, and `description` narrows the text |
@@ -141,8 +143,8 @@ With `STORE_URL` set, `alice.mjs` serves every member of the passkey store (`sto
 
 - Rules are the store's: each item's rule for everyone, or the rule its owner set for this caller. Only-me items never appear.
 - Item ids are the store's. Scopes name the owner readably, `item:<name>-<hex>/<item id>`: `<name>` is the owner's name in lowercase with hyphens, and `<hex>` is the first six hex digits of the member id. The console shows whose item each scope is, and his supervisor judges each owner's items apart.
-- `MEMBER_MAP` says which member each person server speaks for, set once at setup: `{"<person server>": "<member id>"}`, or `{"<person server> <sub>": "<member id>"}` to tell apart several people on one person server. It is inline JSON or a file path. A file is read on every call, so it can change while the server runs. To find a member's id, sign in to the store as them and open `/auth/me`.
-- An unmapped person server gets `not_a_member` from both tools, and a person id the store does not know gets `unknown_person`. If the store does not answer, the call fails with `502 store_unavailable`.
+- The directory learns which member is asking from the person server it trusts, this deployment's `AAUTH_PS`. That server records the member behind each pairwise `sub` when it issues a person token, and answers `GET /api/subjects?aud=<resource>&sub=<sub>` with the console token (`BOB_CONSOLE_TOKEN`). The directory remembers each answer for ten minutes, and checks the member still has a store account. Nobody sets anything up: whoever approves an agent's mission is the member the directory sees.
+- Another person server, a `sub` the person server does not know, or a member with no store account gets `not_a_member` from both tools, and a person id the store does not know gets `unknown_person`. If the store does not answer, the call fails with `502 store_unavailable`.
 
 In this mode Alice's `/api` acts for one owner at a time:
 - A member signed in to the store sends the store's `sid` cookie, and the MCP server asks the store's `/auth/me` whose session it is. The cookie is host-only, so the console must reach `/api` through the store's origin. A post with a cookie must have a JSON body, or it gets `415`.
@@ -154,10 +156,10 @@ In this mode Alice's `/api` acts for one owner at a time:
 To serve a running store:
 
 ```bash
-STORE_URL=http://127.0.0.1:8790 STORE_INTERNAL_TOKEN=<the store's token> MEMBER_MAP=.keys/member-map.json npm run world
+STORE_URL=http://127.0.0.1:8790 STORE_INTERNAL_TOKEN=<the store's token> npm run world
 ```
 
-`npm run check:network` needs no world or store running. It starts a store with a temporary database on port 4690 and a world on 4601 to 4603. It registers Alice, Bob and Carol with the store's software passkey, maps Bob's person server to Bob, and runs thirteen cases as Bob's agent, with Alice and Carol answering at `/api`. Run `npm ci` in `store/` first.
+`npm run check:network` needs no world or store running. It starts a store with a temporary database on port 4690 and a world on 4601 to 4603. It registers Alice, Bob and Carol with the store's software passkey, and runs thirteen cases as Bob's agent, with Alice and Carol answering at `/api`. Run `npm ci` in `store/` first.
 
 ## The hosted MCP endpoint
 

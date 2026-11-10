@@ -5,11 +5,12 @@ import { buildAAuthHeader, createResourceToken } from '@aauth/resource'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { RULES, consoleToken, openState, requesterId, slug, tokenMatches } from './alice-state.mjs'
-import { PORTS, RESOURCE } from './config.mjs'
+import { PORTS, PS, RESOURCE } from './config.mjs'
 import { isMain, json, listen, logger, readBody, short } from './http.mjs'
 import { resourceKey } from './keys.mjs'
 import { routeTestHostsToLoopback } from './loopback.mjs'
 import { openPeople } from './people.mjs'
+import { psApi } from './ps-api.mjs'
 import { verifySignedRequest } from './verify.mjs'
 
 const log = logger('alice')
@@ -21,7 +22,15 @@ const itemScope = item => `item:${item.scope_id ?? item.id}`
 const state = openState(new URL('./alice.json', import.meta.url))
 const first = state.owner.first_name
 const ownerName = `${state.owner.first_name} ${state.owner.last_name}`
-const people = openPeople()
+// The directory trusts this deployment's person server, which says which member each pairwise sub it issued is.
+const people = openPeople(process.env, {
+  resolve: (ps, sub) => (ps === PS
+    ? psApi().call(`/subjects?aud=${encodeURIComponent(RESOURCE)}&sub=${encodeURIComponent(sub)}`).then(r => r.member?.id ?? null, err => {
+      if (/answered 404/.test(err.message)) return null
+      throw err
+    })
+    : null),
+})
 const aliceOnly = { items: undefined, owner: undefined, name: ownerName, first }
 
 // mockin's auth token names the agent's key (cnf), not the agent, so remember who signed with each key.
@@ -100,7 +109,7 @@ async function aauthGate(req, url, raw, message, key, sign) {
   const ps = token.type === 'person' ? token.iss : token.ps
   const rid = requesterId(ps, token.sub)
   const known = state.requester(rid)
-  const member = people?.memberFor(ps, token.sub) ?? null
+  const member = (await people?.memberFor(ps, token.sub)) ?? null
   const revokedBy = people && toolCalls(message, 'search_context').map(m => m.params.arguments?.person).find(p => state.revokedBy(rid, p))
   if (known?.status === 'revoked' || revokedBy) {
     log(`✗ ${known.label} (${rid}) is revoked${revokedBy ? ` by ${short(revokedBy)}` : ''} → 403`)

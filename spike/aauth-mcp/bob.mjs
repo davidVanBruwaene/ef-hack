@@ -134,6 +134,7 @@ async function personToken(req, res, url, raw) {
   if (state.expired(m)) return refuse(`under mission ${short(m.s256)}, which has expired`, () => terminated(res))
   log(`person token for ${m.person.name} at ${body.resource} under mission ${short(m.s256)}`)
   state.record({ mission: m.id, mission_s256: m.s256, event: 'person_token', agent: who.agent, detail: body.resource })
+  state.noteSubject(body.resource, subjectFor(m.person.id, body.resource), m.person)
   json(res, 200, await issuePersonToken({ member: m.person.id, resource: body.resource, agentJwk: who.jwk, agentExp: who.exp, mission: m }), { 'cache-control': 'no-store' })
 }
 
@@ -266,6 +267,10 @@ async function api(req, res, url) {
     // §11.9.4: a code already answered, or whose request expired, is invalid_code.
     if (!state.isOpen(x)) return reply(410, { error: 'invalid_code', status: x.status })
     return reply(200, x.scopes ? { kind: 'review', review: x, mission: state.mission(x.mission) } : { kind: 'mission', mission: x, owner: state.ownerOf(x.agent) ?? null })
+  }
+  if (req.method === 'GET' && url.pathname === '/api/subjects') {
+    const member = state.subject(url.searchParams.get('aud') ?? '', url.searchParams.get('sub') ?? '')
+    return member ? reply(200, { member }) : reply(404, { error: 'not_found' })
   }
   if (req.method === 'POST' && url.pathname === '/api/agents') {
     const body = parseJson(await readBody(req))

@@ -1,7 +1,7 @@
 // Checks Alice's MCP server on the people network: starts a throwaway store and world on spare ports, registers Alice, Bob and Carol with soft passkeys, and plays Bob's agent. Usage: node network-check.mjs [case ...]
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,7 +12,6 @@ const HERE = fileURLToPath(new URL('.', import.meta.url))
 const STORE_DIR = fileURLToPath(new URL('../../store/', import.meta.url))
 const PROXY = join(HERE, 'proxy.mjs')
 const TMP = mkdtempSync(join(tmpdir(), 'network-check-'))
-const MAP = join(TMP, 'member-map.json')
 const STORE_PORT = 4690
 const STORE = `http://127.0.0.1:${STORE_PORT}`
 // The passkey signs for this origin, which must be one of the store's RP_ORIGINS.
@@ -20,13 +19,14 @@ const STORE_ORIGIN = `http://localhost:${STORE_PORT}`
 const WORLD = {
   AAUTH_PS: 'https://ps.aauth.test', AAUTH_RESOURCE: 'https://alice.aauth.test', AAUTH_AGENT: 'https://bob-agent.aauth.test',
   AAUTH_PS_PORT: '4601', AAUTH_RESOURCE_PORT: '4602', AAUTH_AGENT_PORT: '4603',
-  AAUTH_DATA_DIR: join(TMP, 'data'), STORE_URL: STORE, STORE_INTERNAL_TOKEN: randomBytes(18).toString('base64url'), MEMBER_MAP: MAP,
+  AAUTH_DATA_DIR: join(TMP, 'data'), STORE_URL: STORE, STORE_INTERNAL_TOKEN: randomBytes(18).toString('base64url'),
 }
 // Before the spike's modules load: config.mjs reads hosts and ports once. Missions are rules only, so Jev is never asked.
 Object.assign(process.env, WORLD)
 delete process.env.OPENROUTER_API_KEY
 
-const { PS } = await import('./config.mjs')
+const { AGENT, PS } = await import('./config.mjs')
+const { agentSession } = await import('./agent.mjs')
 const { consoleToken } = await import('./alice-state.mjs')
 const { psApi } = await import('./ps-api.mjs')
 const { requestMission } = await import('./missions.mjs')
@@ -140,9 +140,9 @@ function bobAllows(s256) {
 }
 
 // Bob's agent: proxy.mjs under this run's mission, one per case so a refusal cannot leave state behind.
-async function agent(fn) {
+async function agent(fn, { name, s256 } = {}) {
   const transport = new StdioClientTransport({
-    command: process.execPath, args: [PROXY], env: { ...process.env, AAUTH_MISSION_S256: mission.s256 }, stderr: 'pipe',
+    command: process.execPath, args: [PROXY], env: { ...process.env, AAUTH_MISSION_S256: s256 ?? mission.s256, ...(name ? { AAUTH_AGENT_NAME: name } : {}) }, stderr: 'pipe',
   })
   transport.stderr?.on('data', d => keep('proxy', d))
   const client = new Client({ name: 'network-check', version: '0.0.1' })
@@ -317,18 +317,18 @@ const CASES = {
     return "Alice's revocation refuses Bob at Alice only, hides her from find_people, and lifts cleanly"
   },
 
+  // Another agent, whose member the person server names but the store does not know, as when that account is gone.
   async not_a_member() {
-    writeFileSync(MAP, '{}')
-    try {
-      return await agent(async tool => {
-        const find = await failsWith(tool('find_people', {}))
-        const search = await failsWith(tool('search_context', { person: alice.id }))
-        check(/not_a_member/.test(find ?? '') && /not_a_member/.test(search ?? ''), `find_people: ${find}; search_context: ${search}`)
-        return 'an unmapped person server gets not_a_member from both tools'
-      })
-    } finally {
-      writeFileSync(MAP, JSON.stringify({ [PS]: bob.id }))
-    }
+    const stranger = await requestMission(`A stranger's mission (network-check ${Date.now().toString(36)})`, {
+      session: await agentSession(`aauth:stranger@${new URL(AGENT).hostname}`),
+      onInteraction: (url, code) => ps.answerCode(code, 'approve', { id: 'not-a-member', name: 'Zed' }, { supervisor: 'rules' }),
+    })
+    return agent(async tool => {
+      const find = await failsWith(tool('find_people', {}))
+      const search = await failsWith(tool('search_context', { person: alice.id }))
+      check(/not_a_member/.test(find ?? '') && /not_a_member/.test(search ?? ''), `find_people: ${find}; search_context: ${search}`)
+      return 'an agent whose member the store does not know gets not_a_member from both tools'
+    }, { name: 'stranger', s256: stranger.s256 })
   },
 
   async unknown_person() {
@@ -373,7 +373,6 @@ const carol = await signUp('Carol', 'Nguyen', [
   ['Calendar', 'https://cal.example.org/carol', 'ask'],
   ['Phone', 'tel:+15550100', 'ask'],
 ])
-writeFileSync(MAP, JSON.stringify({ [PS]: bob.id }))
 
 const world = run('world', ['world.mjs'], HERE, process.env)
 const wellKnown = `http://127.0.0.1:${WORLD.AAUTH_RESOURCE_PORT}/.well-known/aauth-resource.json`
@@ -384,7 +383,7 @@ const mission = await requestMission(`I met Alice at the hackathon. Find her in 
     await ps.answerCode(code, 'approve', { id: bob.id, name: 'Bob' }, { supervisor: 'rules' })
   },
 })
-console.log(`store ${STORE} and world on ${WORLD.AAUTH_PS_PORT}-${WORLD.AAUTH_RESOURCE_PORT}; members Alice, Bob (mapped from ${PS}), Carol; mission ${mission.s256.slice(0, 8)}… approved by Bob, rules only`)
+console.log(`store ${STORE} and world on ${WORLD.AAUTH_PS_PORT}-${WORLD.AAUTH_RESOURCE_PORT}; members Alice, Bob (through ${PS}), Carol; mission ${mission.s256.slice(0, 8)}… approved by Bob, rules only`)
 
 const stopBob = bobAllows(mission.s256)
 let failed = 0

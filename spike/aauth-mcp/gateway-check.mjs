@@ -1,7 +1,7 @@
 // Checks the hosted MCP endpoint end to end: a throwaway store, world and console server, an MCP client that registers and connects with OAuth, a member who signs in with a soft passkey and approves in the console. Usage: node gateway-check.mjs
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,7 +11,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const STORE_DIR = fileURLToPath(new URL('../../store/', import.meta.url))
 const TMP = mkdtempSync(join(tmpdir(), 'gateway-check-'))
-const MAP = join(TMP, 'member-map.json')
 const STORE_PORT = 4790
 const STORE = `http://127.0.0.1:${STORE_PORT}`
 const STORE_ORIGIN = `http://localhost:${STORE_PORT}`
@@ -21,7 +20,7 @@ const REDIRECT = 'http://127.0.0.1:9/callback'
 const WORLD = {
   AAUTH_PS: 'https://ps.aauth.test', AAUTH_RESOURCE: 'https://alice.aauth.test', AAUTH_AGENT: 'https://bob-agent.aauth.test',
   AAUTH_PS_PORT: '4701', AAUTH_RESOURCE_PORT: '4702', AAUTH_AGENT_PORT: '4703',
-  AAUTH_DATA_DIR: join(TMP, 'data'), STORE_URL: STORE, STORE_INTERNAL_TOKEN: randomBytes(18).toString('base64url'), MEMBER_MAP: MAP,
+  AAUTH_DATA_DIR: join(TMP, 'data'), STORE_URL: STORE, STORE_INTERNAL_TOKEN: randomBytes(18).toString('base64url'),
   RP_ID: '', PUBLIC_URL: ORIGIN, BOB_CONSOLE_TOKEN: randomBytes(18).toString('base64url'),
 }
 Object.assign(process.env, WORLD)
@@ -146,8 +145,7 @@ const store = run('store', ['--disable-warning=ExperimentalWarning', 'src/server
 await until('the store', store, async () => (await fetch(`${STORE}/health`)).ok)
 const dana = await signUp('Dana', 'Reyes', [['Site', 'https://dana.example.org', 'everyone']])
 const ana = await signUp('Ana', 'Silva', [['Personal site', 'https://ana.example.org', 'everyone'], ['Phone', 'tel:+15550123', 'only_me']])
-const eli = await signUp('Eli', 'Park', [])
-writeFileSync(MAP, JSON.stringify({ [PS]: dana.id }))
+const eli = await signUp('Eli', 'Park', [['Site', 'https://eli.example.org', 'everyone']])
 
 const world = run('world', ['world.mjs'], HERE, process.env)
 await until('the world', world, async () => (await (await fetch(`http://127.0.0.1:${WORLD.AAUTH_RESOURCE_PORT}/.well-known/aauth-resource.json`)).json()).name === 'The people network')
@@ -221,6 +219,30 @@ try {
     const out = parsed(r)
     check(JSON.stringify(out.shared ?? {}).includes('ana.example.org'), `got ${JSON.stringify(out)}`)
     return "Ana's site came back"
+  })
+
+  await step('two_members', async () => {
+    const theirs = await connect(eli, "Eli's agent")
+    const elis = await mcpClient(theirs.tokens.access_token)
+    const text = 'See who else is on the network.'
+    const approve = (async () => {
+      for (let i = 0; i < 100; i++) {
+        const m = (await asMember(eli, '/agent/state')).json?.missions?.find(x => x.description === text)
+        if (m) return asMember(eli, `/agent/missions/${m.id}`, { decision: 'approve', description: text, rules_only: true })
+        await sleep(200)
+      }
+      throw new Error("Eli's mission never reached his console")
+    })()
+    const started = await elis.callTool({ name: 'start_mission', arguments: { description: text } })
+    await approve
+    check(parsed(started).status === 'approved', `Eli's start_mission said ${JSON.stringify(parsed(started))}`)
+    const seen = by => (parsed(by).people ?? []).map(p => p.person)
+    const forEli = seen(await elis.callTool({ name: 'find_people', arguments: {} }))
+    const forDana = seen(await client.callTool({ name: 'find_people', arguments: {} }))
+    check(forEli.includes(dana.id) && !forEli.includes(eli.id), `Eli's agent saw ${forEli}`)
+    check(forDana.includes(eli.id) && !forDana.includes(dana.id), `Dana's agent saw ${forDana}`)
+    await elis.close()
+    return "Eli's agent is Eli to the directory and Dana's is Dana: each sees the other, never themselves"
   })
 
   await step('refresh', async () => {

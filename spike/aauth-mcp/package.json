@@ -16,7 +16,6 @@
     "check:network": "node network-check.mjs",
     "mcp-config": "node write-mcp-config.mjs",
     "console": "node agent-console.mjs",
-    "member-map": "node --disable-warning=ExperimentalWarning member-map.mjs",
     "check:gateway": "node --disable-warning=ExperimentalWarning gateway-check.mjs"
   },
   "dependencies": {
