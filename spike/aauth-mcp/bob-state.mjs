@@ -60,6 +60,16 @@ export function openBobState() {
 
     useCode(x) { x.code_used_at = now(); changed() },
 
+    // Binds an unbound agent to a member up front, as when the member connects it; an agent bound to another member stays theirs.
+    bind(agent, member) {
+      const owner = s.agents[agent]
+      if (owner) return owner.id === member.id ? owner : null
+      s.agents[agent] = { id: member.id, name: member.name, bound_at: now() }
+      log({ event: 'agent_bound', agent, decided_by: member.name })
+      changed()
+      return s.agents[agent]
+    },
+
     propose({ agent, description, tools, resources }) {
       const m = {
         id: randomId('m'), code: newCode(), agent, description, tools, resources,

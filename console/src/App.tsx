@@ -13,6 +13,7 @@ import { Requests } from '@/views/Requests'
 import { Shared } from '@/views/Shared'
 import { Activity } from '@/views/Activity'
 import { SignIn } from '@/views/SignIn'
+import { ConnectRequest, connectId } from '@/views/Connect'
 
 type Tab = 'requests' | 'shared' | 'activity'
 
@@ -41,6 +42,8 @@ export default function App() {
   }, [refresh])
 
   if (signedOut) return <SignIn onSignedIn={refresh} />
+  const connecting = connectId()
+  if (connecting && state) return <ConnectRequest id={connecting} />
 
   const groups = state ? pendingGroups(state) : []
   const name = state ? `${state.owner.first_name} ${state.owner.last_name}` : ''

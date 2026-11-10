@@ -15,6 +15,7 @@ npm run world      # leave it running
 npm run check      # in a second terminal
 npm run mission    # before using it from Claude Code: a member approves the mission at /api, or in the console when RP_ID is set
 npm run check:network  # the people network against a throwaway store; needs npm ci in store/ first
+npm run check:gateway  # the hosted MCP endpoint, with OAuth and a soft passkey; also needs the console built
 ```
 
 The passkey store (accounts and sign-in; Node 22.18 or later) lives in `store/`:
@@ -65,6 +66,8 @@ claude --mcp-config mcp.json --strict-mcp-config --allowedTools mcp__alice__find
 ```
 
 Requests the supervisor holds wait for the agent's member in the console, and the other member answers asks there too, under Requests.
+
+To use your own agent instead (Claude, ChatGPT or any agent that takes a remote MCP server), add `https://<RP_ID>/mcp` as a custom connector. Sign in with your passkey when it asks, and press Connect. The agent then has a `start_mission` tool, and you approve its mission in the console. The tunnel config needs the endpoint's paths, so rerun `node tunnel.mjs config alice --console 4531 --store 8790 --force` once after updating.
 
 Keep this section current: anyone should be able to run main from a fresh clone.
 
