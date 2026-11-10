@@ -146,7 +146,16 @@ function file(res, url, cache) {
 
 // The public origin agents and members reach this server at; the passkey's RP_ID host behind a tunnel.
 const ORIGIN = (process.env.PUBLIC_URL || (process.env.RP_ID ? `https://${process.env.RP_ID.trim()}` : `http://127.0.0.1:${PORT}`)).replace(/\/+$/, '')
-const gateway = openGateway({ origin: ORIGIN, memberOf: member, ps, fromConsole, log: logger('gateway') })
+// Only the store's unknown_member counts: an unreachable store or a missing token never revokes anyone.
+async function memberGone(id) {
+  if (!process.env.STORE_INTERNAL_TOKEN) return false
+  const res = await fetch(`${STORE}/internal/users/${encodeURIComponent(id)}/items`, {
+    headers: { authorization: `Bearer ${process.env.STORE_INTERNAL_TOKEN}` }, signal: AbortSignal.timeout(5000),
+  }).catch(() => null)
+  return res?.status === 404 && (await res.json().catch(() => ({}))).error === 'unknown_member'
+}
+
+const gateway = openGateway({ origin: ORIGIN, memberOf: member, memberGone, ps, fromConsole, log: logger('gateway') })
 
 // The console shows its own passkey sign-in, so / is served signed in or not.
 async function handle(req, res) {

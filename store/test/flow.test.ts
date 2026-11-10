@@ -81,6 +81,18 @@ test('names are required and a bad origin is refused', async () => {
   assert.equal((await c.call('POST', '/auth/register/options', { first_name: 'A', last_name: 'B' }, null)).status, 403)
 })
 
+test('a taken name needs separate: true, in any case', async () => {
+  const app = createApp(config)
+  assert.equal((await register(client(app), new SoftPasskey())).status, 200)
+  const again = await client(app).call('POST', '/auth/register/options', { first_name: 'alice', last_name: 'EXAMPLE' })
+  assert.equal(again.status, 409)
+  assert.equal(again.json.error, 'name_in_use')
+  const c = client(app)
+  const opts = await c.call('POST', '/auth/register/options', { first_name: 'Alice', last_name: 'Example', separate: true })
+  assert.equal(opts.status, 200)
+  assert.equal((await c.call('POST', '/auth/register/verify', new SoftPasskey().create(opts.json, ORIGIN))).status, 200)
+})
+
 test('an assertion cannot be replayed and a wrong key is rejected', async () => {
   const app = createApp(config)
   const c = client(app)

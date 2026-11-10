@@ -72,6 +72,7 @@ export function createAuth(db: DatabaseSync, config: Config): { app: Hono<Env>; 
 
   const q = {
     userById: one<UserRow>(db.prepare('SELECT * FROM users WHERE id = ?')),
+    nameTaken: one<{ n: number }>(db.prepare('SELECT 1 AS n FROM users WHERE lower(first_name) = lower(?) AND lower(last_name) = lower(?)')),
     credById: one<CredentialRow>(db.prepare('SELECT * FROM credentials WHERE id = ?')),
     credsOf: all<CredentialRow>(db.prepare('SELECT * FROM credentials WHERE user_id = ? ORDER BY created_at')),
     insUser: db.prepare('INSERT INTO users (id, display_name, first_name, last_name, created_at) VALUES (?,?,?,?,?)'),
@@ -202,6 +203,10 @@ export function createAuth(db: DatabaseSync, config: Config): { app: Hono<Env>; 
     const first = String(body.first_name ?? '').trim()
     const last = String(body.last_name ?? '').trim()
     if (!first || !last || first.length > 80 || last.length > 80) return c.json({ error: 'name_required' }, 400)
+    // A second account under a taken name is nearly always someone whose passkey is on another device; they must say it is a different person.
+    if (body.separate !== true && q.nameTaken(first, last)) {
+      return c.json({ error: 'name_in_use', error_description: `An account named ${first} ${last} already exists. If it is yours, sign in with its passkey instead.` }, 409)
+    }
     const userId = randomUUID()
     const options = await generateRegistrationOptions({
       rpName: config.rpName,

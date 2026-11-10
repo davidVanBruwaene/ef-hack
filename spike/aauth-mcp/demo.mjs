@@ -79,7 +79,7 @@ start('store', process.execPath, ['--disable-warning=ExperimentalWarning', 'src/
   env: { ...env, STORE_PORT: String(STORE_PORT), RP_ORIGINS: env.RP_ORIGINS || CONSOLE_URL, PUBLIC_URL: env.PUBLIC_URL || CONSOLE_URL, STORE_INTERNAL_TOKEN },
 })
 start('world', process.execPath, ['world.mjs'], { cwd: at('./'), env: { ...env, STORE_URL, STORE_INTERNAL_TOKEN } })
-start('console', process.execPath, ['agent-console.mjs', '--port', String(CONSOLE_PORT)], { cwd: at('./'), env: { ...env, STORE_URL } })
+start('console', process.execPath, ['agent-console.mjs', '--port', String(CONSOLE_PORT)], { cwd: at('./'), env: { ...env, STORE_URL, STORE_INTERNAL_TOKEN } })
 for (const file of tunnels) start('tunnel', 'cloudflared', ['tunnel', '--config', file, 'run'], { env })
 
 async function allListening() {

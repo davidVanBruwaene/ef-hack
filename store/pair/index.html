@@ -90,7 +90,12 @@ $('login').onclick = async () => {
 $('register').onclick = async () => {
   err('')
   try {
-    const o = await post('/auth/register/options', { first_name: $('first').value, last_name: $('last').value })
+    const name = { first_name: $('first').value, last_name: $('last').value }
+    let o = await post('/auth/register/options', name)
+    if (o.status === 409 && o.body?.error === 'name_in_use') {
+      if (!confirm(o.body.error_description + ' Create a separate account anyway?')) return err('Use Sign in with the passkey you made when you joined.')
+      o = await post('/auth/register/options', { ...name, separate: true })
+    }
     if (o.status !== 200) return err('Enter your first and last name.')
     const cred = await navigator.credentials.create({ publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(o.body) })
     await finish(await post('/auth/register/verify?pair=' + encodeURIComponent(pair) + '&jt=' + encodeURIComponent(joinToken), cred.toJSON()))
