@@ -20,8 +20,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DEFAULT_CONFIG = join(homedir(), '.cloudflared', 'config.yml')
 // The console is not an AAuth server; its hostname is the passkey RP_ID that the store reads.
 const CONSOLE_HOST = process.env.RP_ID?.trim()
-// With --store, Alice's server answers /api/, agent-console.mjs these paths and the store the rest, so all three see the store's sid cookie.
-const CONSOLE_PATHS = '^/($|assets/|agent/)'
+// With --store, Alice's server answers /api/, agent-console.mjs these paths (the console and the hosted MCP endpoint) and the store the rest, so all three see the store's sid cookie.
+const CONSOLE_PATHS = '^/($|assets/|agent/|mcp$|oauth/|\\.well-known/oauth-)'
 
 const fail = msg => { console.error(`✗ ${msg}`); process.exit(1) }
 // A quoted ~ reaches node unexpanded.

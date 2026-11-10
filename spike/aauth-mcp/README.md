@@ -67,6 +67,7 @@ The checks need no mission of their own. Each run proposes one and approves it a
 | `node client-check.mjs review_deny` | Same, and Bob denies | The item is `refused` and Alice is never asked; `refused_why` says Bob declined it |
 | `node client-check.mjs remembered_deny` | Bob denies an item, then the agent asks again | The supervisor refuses the second call from the log, without asking Bob; `refused_why` cites the earlier denial |
 | `node client-check.mjs ask remembered_deny partial` | One call for an item allowed earlier in the mission and one refused earlier | The first comes back and the second is `refused`, in one answer |
+| `npm run check:gateway` | The hosted MCP endpoint with its own store, world and console server (see [The hosted MCP endpoint](#the-hosted-mcp-endpoint)) | `all 9 passed` |
 | `npm run check:network` | The people network, with its own store and world (see [The people network](#the-people-network)) | `all 13 passed` |
 
 To run it from Claude Code, approve a mission (`npm run mission`), then write the MCP config for this checkout (`mcp.json` is gitignored):
@@ -158,6 +159,20 @@ STORE_URL=http://127.0.0.1:8790 STORE_INTERNAL_TOKEN=<the store's token> MEMBER_
 
 `npm run check:network` needs no world or store running. It starts a store with a temporary database on port 4690 and a world on 4601 to 4603. It registers Alice, Bob and Carol with the store's software passkey, maps Bob's person server to Bob, and runs thirteen cases as Bob's agent, with Alice and Carol answering at `/api`. Run `npm ci` in `store/` first.
 
+## The hosted MCP endpoint
+
+Any agent that can add a remote MCP server connects at `https://<RP_ID>/mcp`, served by the console server (`gateway.mjs`). This covers Claude, ChatGPT and other hosted agents, which cannot launch a local proxy. The agent signs in with OAuth (MCP authorization): it finds `/.well-known/oauth-protected-resource`, then the authorization server metadata, and registers with dynamic client registration or a client ID metadata document. The authorize step sends the member to the console at `/?connect=<id>`. There they sign in with their passkey and press Connect. PKCE (S256) is required. Access tokens last an hour, and refresh tokens last 30 days and rotate on use.
+
+Each connection is its own AAuth agent, `aauth:<connection id>@<agent host>`, and the person server binds it to the member when they connect. Behind `/mcp`, the gateway does what `proxy.mjs` does, with the same `@aauth/agent` fetch (`aauth-fetch.mjs`) under that connection's identity. Alice's server lists its tools to an agent before any mission, so the agent sees them at once. The gateway adds one tool of its own, `start_mission`. The other tools answer `mission_required` until the member approves a mission in the console. The mission reaches that member's console without a code, because the agent is already theirs. A member lists and disconnects their agents under What you share; disconnecting drops the connection's tokens.
+
+To connect, add `https://<RP_ID>/mcp` as a custom connector in the agent. In Claude Code:
+
+```bash
+claude mcp add --transport http parley https://<RP_ID>/mcp
+```
+
+`npm run check:gateway` needs no world or store running. It starts a store on 4790, a world on 4701 to 4703 and a console server on 4731, all on temporary data. It then plays an MCP client through registration, connect, the token endpoint, a mission and two tool calls, then refresh and disconnect. Run `npm ci` in `store/` and build the console first.
+
 ## Behind Cloudflare
 
 Each side's ports go out through a Cloudflare Tunnel, and `.env` at the repo root names the public hostnames. Give these tunnels their own config files: changing a tunnel that already serves other hostnames means restarting it.
@@ -226,7 +241,8 @@ The tunnel passes the public hostname through as the `Host` header, and the HTTP
 
 - **Missions.** The person server implements mission creation and approval (§8.1, §8.2) and keeps a log. It returns no `person_tokens` in the approval response, since minting them needs a request the agent signed, and it offers no clarification chat. Missions last 24 hours.
 - **Members' sign-in.** A member answers in the console with their store passkey, or a script answers with the console token. An agent running on the machine that runs the person server can read `.keys/bob-console-token`, and so answer for its member. A person server on its own host closes that.
-- **One agent identity.** The agent provider publishes one agent, `aauth:claude@<agent host>`, so the first member to approve its mission owns it. Each member needs their own agent key before a second member can run an agent.
+- **The local proxy's identity.** `proxy.mjs` signs as one agent, `aauth:claude@<agent host>`, so the first member to approve its mission owns it. Each hosted connection is an agent of its own, and AAuth agents from other providers bring their own identity.
+- **Hosted clients.** Each hosted agent product decides whether it accepts a custom remote MCP server; `check:gateway` plays a generic MCP client, not any particular product.
 - **Who is asking.** Alice's server knows a requester only as a person server plus a pairwise `sub`, labelled with the name that server puts in the auth token. Nothing proves that name.
 - **Reasons.** The `reason` Alice sees is the agent's own claim. Alice's server never sees Bob's mission text.
 - **Agent identity.** The auth token names the agent's key (`cnf`), not the agent itself. To fill the gap, `alice.mjs` records which agent signed with each key.

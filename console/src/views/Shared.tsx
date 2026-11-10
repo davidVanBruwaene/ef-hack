@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { ConnectedAgents } from '@/views/Connect'
 
 const RULES: { id: Rule; name: string }[] = [
   { id: 'everyone', name: 'Everyone' },
@@ -110,6 +111,8 @@ export function Shared({ state, refresh }: { state: State; refresh: () => void }
           </form>
         </CardContent>
       </Card>
+
+      <ConnectedAgents />
     </main>
   )
 }

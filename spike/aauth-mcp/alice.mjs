@@ -34,6 +34,8 @@ const reject = (status, error, requirement, description) => ({
   headers: requirement ? { 'aauth-requirement': requirement } : {},
 })
 
+const DISCOVERY = new Set(['initialize', 'ping', 'tools/list'])
+const discoveryOnly = message => [message].flat().every(m => typeof m?.method === 'string' && (DISCOVERY.has(m.method) || m.method.startsWith('notifications/')))
 const toolCalls = (message, name) => (Array.isArray(message) ? message : [message])
   .filter(m => m?.method === 'tools/call' && m.params?.name === name)
 
@@ -86,6 +88,11 @@ async function aauthGate(req, url, raw, message, key, sign) {
 
   if (token.type === 'agent') {
     agentByKey.set(sig.thumbprint, token.sub)
+    // Listing the tools says nothing about anyone, so an agent may do it before its member approves a mission.
+    if (discoveryOnly(message)) {
+      log(`agent ${token.sub} lists the tools → MCP ${[message].flat().map(m => m.method).join(', ')}`)
+      return { ok: true, discovery: true, auth: token, requester: null, member: null, agent: token.sub, scopes: [], refused: new Set() }
+    }
     log(`1. agent ${token.sub} signed in → asking for a person token`)
     return reject(401, 'person_token_required', buildAAuthHeader('person-token'))
   }
@@ -372,7 +379,7 @@ export async function startAlice() {
     }
     if (!gate.ok) return json(res, gate.status, gate.body, gate.headers)
 
-    log(`3. auth token ok for ${gate.requester.label} [${gate.scopes.join(' ')}] → MCP ${message.method ?? 'response'}`)
+    if (!gate.discovery) log(`3. auth token ok for ${gate.requester.label} [${gate.scopes.join(' ')}] → MCP ${message.method ?? 'response'}`)
     const server = people ? networkServer(gate) : contextServer(gate)
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
     res.on('close', () => { transport.close(); server.close() })

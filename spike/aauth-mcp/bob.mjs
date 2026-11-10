@@ -207,7 +207,9 @@ async function pollReview(req, res, url, raw, id) {
   }
   const args = held.get(id)
   held.delete(id)
-  if (r.status === 'denied') return problem(res, 403, 'denied', refusal(m, r.resource, r.scopes, `${nameOf(m)} declined the request.`))
+  // Only the scopes held for the member are refused; ones the supervisor allowed come back when the agent asks again without them.
+  const heldScopes = r.verdicts?.filter(v => v.decision !== 'ALLOW').map(v => v.scope) ?? r.scopes
+  if (r.status === 'denied') return problem(res, 403, 'denied', refusal(m, r.resource, heldScopes.length ? heldScopes : r.scopes, `${nameOf(m)} declined the request.`))
   if (!args) return problem(res, 408, 'expired', 'the held request is gone; request access again')
   return issue(res, args)
 }
@@ -264,6 +266,15 @@ async function api(req, res, url) {
     // §11.9.4: a code already answered, or whose request expired, is invalid_code.
     if (!state.isOpen(x)) return reply(410, { error: 'invalid_code', status: x.status })
     return reply(200, x.scopes ? { kind: 'review', review: x, mission: state.mission(x.mission) } : { kind: 'mission', mission: x, owner: state.ownerOf(x.agent) ?? null })
+  }
+  if (req.method === 'POST' && url.pathname === '/api/agents') {
+    const body = parseJson(await readBody(req))
+    const member = memberIn(body)
+    if (!member || typeof body?.agent !== 'string' || !body.agent) return reply(400, { error: 'invalid_request', error_description: 'agent and member {id, name} are required' })
+    const bound = state.bind(body.agent, member)
+    if (!bound) return reply(403, { error: 'forbidden', error_description: 'this agent belongs to another member' })
+    log(`${member.name} connected agent ${body.agent}`)
+    return reply(200, { ok: true, agent: body.agent, owner: bound })
   }
   const [, kind, id] = url.pathname.match(/^\/api\/(missions|reviews)\/([\w-]+)$/) ?? []
   if (req.method === 'POST' && kind) {

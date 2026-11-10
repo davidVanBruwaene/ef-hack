@@ -1,10 +1,12 @@
-// Serves the console (console/dist), and at /agent each signed-in member's own agents' requests from the person server. See two-laptops.md.
+// Serves the console (console/dist), at /agent each signed-in member's own agents' requests from the person server, and the hosted MCP endpoint (gateway.mjs). See two-laptops.md.
 import { existsSync, readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { consoleToken } from './bob-state.mjs'
 import { LOOPBACK, PORTS, PS } from './config.mjs'
+import { openGateway } from './gateway.mjs'
+import { logger } from './http.mjs'
 
 const USAGE = 'usage: node agent-console.mjs [--port <port>]   (STORE_URL as for the directory)'
 const fail = msg => { console.error(`✗ ${msg}`); process.exit(1) }
@@ -131,9 +133,14 @@ function file(res, url, cache) {
   res.end(bytes)
 }
 
+// The public origin agents and members reach this server at; the passkey's RP_ID host behind a tunnel.
+const ORIGIN = (process.env.PUBLIC_URL || (process.env.RP_ID ? `https://${process.env.RP_ID.trim()}` : `http://127.0.0.1:${PORT}`)).replace(/\/+$/, '')
+const gateway = openGateway({ origin: ORIGIN, memberOf: member, ps, fromConsole, log: logger('gateway') })
+
 // The console shows its own passkey sign-in, so / is served signed in or not.
 async function handle(req, res) {
   const url = new URL(req.url ?? '/', 'http://console')
+  if (await gateway(req, res, url)) return
   if (url.pathname.startsWith('/agent/')) return agent(req, res, url)
   if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'method_not_allowed' })
   if (url.pathname === '/' || url.pathname === '/index.html') return file(res, new URL('index.html', DIST), 'no-store')
@@ -145,4 +152,4 @@ if (!existsSync(new URL('index.html', DIST))) fail('console/dist is missing. Bui
 createServer((req, res) => handle(req, res).catch(err => {
   console.error(err)
   if (!res.headersSent) json(res, 502, { error: 'upstream', error_description: err.cause?.code ?? err.message })
-})).listen(PORT, '127.0.0.1', () => console.log(`console on http://127.0.0.1:${PORT}; store ${STORE}; person server ${PS_API}`))
+})).listen(PORT, '127.0.0.1', () => console.log(`console on http://127.0.0.1:${PORT}; store ${STORE}; person server ${PS_API}; MCP endpoint ${ORIGIN}/mcp`))
