@@ -52,7 +52,7 @@ async function formOrJson(req) {
 const START_MISSION = {
   name: 'start_mission',
   title: 'Start a mission',
-  description: 'Say what you mean to do on the people network for the person you act for. They approve it in their Parley console, and may narrow it; the other tools work only under an approved mission, and the person server checks each request against it. Waits up to 45 s for their answer; calling it again while one waits reports on that one.',
+  description: 'Say what you mean to do on the people network for the person you act for. They approve it in their Parley console, and may narrow it; the other tools work only under an approved mission, and the person server checks each request against it. Waits up to 45 s for their answer; calling it again with the same description reports on that one, waiting or approved.',
   inputSchema: {
     type: 'object',
     properties: { description: { type: 'string', description: 'What you will do, in one or two plain sentences, as the person will read it' } },
@@ -289,15 +289,21 @@ export function openGateway({ origin, memberOf, ps, fromConsole, log }) {
 
   async function startMission(conn, description) {
     if (typeof description !== 'string' || !description.trim()) return failed({ error: 'invalid_request', error_description: 'description is required' })
+    const asked = description.trim()
     let p = proposals.get(conn.id)
+    const held = missionOf(conn)
+    // Asking again for the mission already approved, as worded or as the member narrowed it, reports it instead of proposing it twice.
+    if (!p && held && (held.requested === asked || held.description === asked)) {
+      return reply({ status: 'approved', mission: held.description, expires_at: held.expires_at })
+    }
     if (!p) {
       p = { link: null }
-      p.done = (async () => requestMission(description.trim(), {
+      p.done = (async () => requestMission(asked, {
         session: await sessionOf(conn),
         onInteraction: (url, code) => { p.link = `${url}?code=${encodeURIComponent(code)}` },
       }))().then(
         m => {
-          conn.mission = { s256: m.s256, description: m.blob.description, expires_at: m.blob.expires_at, approved_at: m.blob.approved_at }
+          conn.mission = { s256: m.s256, description: m.blob.description, requested: asked, expires_at: m.blob.expires_at, approved_at: m.blob.approved_at }
           save()
           log(`${conn.member.name} approved a mission for ${conn.client_name}: "${m.blob.description}"`)
           return { status: 'approved' }

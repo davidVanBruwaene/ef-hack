@@ -165,7 +165,8 @@ try {
     return '401 names the protected resource metadata'
   })
 
-  let conn, client
+  let conn, client, firstCode
+  const missionText = 'Find Ana from the party and see what she shares.'
   await step('connect', async () => {
     conn = await connect(dana)
     return 'registered, Dana approved in the console, PKCE checked, a used code refused'
@@ -185,12 +186,13 @@ try {
   })
 
   await step('mission', async () => {
-    const text = 'Find Ana from the party and see what she shares.'
+    const text = missionText
     const answered = (async () => {
       for (let i = 0; i < 100; i++) {
         const st = await asMember(dana, '/agent/state')
         const m = st.json?.missions?.find(x => x.description === text)
         if (m) {
+          firstCode = m.code
           const elis = await asMember(eli, '/agent/state')
           check(!elis.json.missions.some(x => x.id === m.id), "Eli saw Dana's agent's mission")
           const r = await asMember(dana, `/agent/missions/${m.id}`, { decision: 'approve', description: text, rules_only: true })
@@ -205,6 +207,18 @@ try {
     await answered
     check(!r.isError && parsed(r).status === 'approved', `start_mission said ${JSON.stringify(parsed(r))}`)
     return "proposed; it reached Dana's console without a code, not Eli's; approved"
+  })
+
+  await step('ask_again', async () => {
+    const used = await asMember(dana, `/agent/code/${encodeURIComponent(firstCode)}`)
+    check(used.status === 410 && used.json.status === 'approved' && /^You approved this mission/.test(used.json.error_description), `Dana's used code got ${used.status} ${JSON.stringify(used.json)}`)
+    const other = await asMember(eli, `/agent/code/${encodeURIComponent(firstCode)}`)
+    check(other.status === 410 && !other.json.status, `Eli learned how Dana's mission ended: ${JSON.stringify(other.json)}`)
+    const r = await client.callTool({ name: 'start_mission', arguments: { description: missionText } })
+    check(!r.isError && parsed(r).status === 'approved', `asking again said ${JSON.stringify(parsed(r))}`)
+    const open = (await asMember(dana, '/agent/state')).json?.missions ?? []
+    check(!open.some(x => x.description === missionText), `asking again proposed it twice: ${JSON.stringify(open)}`)
+    return 'the used code reads as approved to Dana only; asking again reports the mission without a second proposal'
   })
 
   await step('find_people', async () => {
