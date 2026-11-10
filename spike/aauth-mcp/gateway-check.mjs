@@ -338,6 +338,32 @@ try {
     check(res.status === 401, `after revoking, /mcp answered ${res.status}`)
     return "Eli cannot; Dana can, and the token stops working"
   })
+
+  await step('loopback_port', async () => {
+    const as = conn.as
+    const register = async uris => (await (await fetch(as.registration_endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'Port agent', redirect_uris: uris, token_endpoint_auth_method: 'none' }) })).json()).client_id
+    const verifier = randomBytes(32).toString('base64url')
+    const authorize = (client_id, redirect_uri) => {
+      const u = new URL(as.authorization_endpoint)
+      for (const [k, v] of Object.entries({ response_type: 'code', client_id, redirect_uri, code_challenge: sha256(verifier), code_challenge_method: 'S256', state: 'p1' })) u.searchParams.set(k, v)
+      return fetch(u, { redirect: 'manual' })
+    }
+    const loop = await register(['http://localhost/callback'])
+    const used = 'http://localhost:55023/callback'
+    const go = await authorize(loop, used)
+    const id = new URL(go.headers.get('location') ?? 'x:').searchParams.get('connect')
+    check(go.status === 303 && id, `a registered portless loopback URI with port 55023 got ${go.status}`)
+    const back = new URL((await asMember(dana, `/oauth/connect/${id}`, { decision: 'approve' })).json.redirect)
+    check(back.origin === 'http://localhost:55023' && back.pathname === '/callback', `the code went to ${back.href}`)
+    const form = redirect_uri => new URLSearchParams({ grant_type: 'authorization_code', code: back.searchParams.get('code'), client_id: loop, redirect_uri, code_verifier: verifier })
+    const ok = await fetch(as.token_endpoint, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form(used) })
+    check(ok.status === 200, `the token endpoint, with the port authorize used, answered ${ok.status}`)
+    check((await authorize(loop, 'http://localhost:55023/other')).status === 400, 'another loopback path was accepted')
+    check((await authorize(loop, 'http://127.0.0.1:55023/callback')).status === 400, 'another loopback host was accepted')
+    const web = await register(['https://client.example.org/callback'])
+    check((await authorize(web, 'https://client.example.org:8443/callback')).status === 400, 'an https URI on another port was accepted')
+    return 'any port on a registered loopback URI; path, host and non-loopback ports still exact'
+  })
 } catch {
   console.log(logs.slice(-40).join('\n'))
 }
