@@ -19,23 +19,22 @@ const STORE = `http://127.0.0.1:${STORE_PORT}`
 const STORE_ORIGIN = `http://localhost:${STORE_PORT}`
 const WORLD = {
   AAUTH_PS: 'https://ps.aauth.test', AAUTH_RESOURCE: 'https://alice.aauth.test', AAUTH_AGENT: 'https://bob-agent.aauth.test',
-  AAUTH_PS_PORT: '4601', AAUTH_RESOURCE_PORT: '4602', AAUTH_AGENT_PORT: '4603', AAUTH_MOCKIN_PORT: '4611',
+  AAUTH_PS_PORT: '4601', AAUTH_RESOURCE_PORT: '4602', AAUTH_AGENT_PORT: '4603',
   AAUTH_DATA_DIR: join(TMP, 'data'), STORE_URL: STORE, STORE_INTERNAL_TOKEN: randomBytes(18).toString('base64url'), MEMBER_MAP: MAP,
 }
 // Before the spike's modules load: config.mjs reads hosts and ports once. Missions are rules only, so Jev is never asked.
 Object.assign(process.env, WORLD)
 delete process.env.OPENROUTER_API_KEY
 
-const { LOOPBACK, PS } = await import('./config.mjs')
+const { PS } = await import('./config.mjs')
 const { consoleToken } = await import('./alice-state.mjs')
-const { consoleToken: bobConsoleToken } = await import('./bob-state.mjs')
+const { psApi } = await import('./ps-api.mjs')
 const { requestMission } = await import('./missions.mjs')
 const { SoftPasskey } = await import('../../store/test/authenticator.ts')
 
 const ALICE_API = `http://127.0.0.1:${WORLD.AAUTH_RESOURCE_PORT}/api`
-const BOB_API = `http://127.0.0.1:${WORLD.AAUTH_PS_PORT}/api`
+const ps = psApi(`http://127.0.0.1:${WORLD.AAUTH_PS_PORT}/api`)
 const aliceToken = consoleToken()
-const asBob = { authorization: `Bearer ${bobConsoleToken()}` }
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 const check = (ok, what) => { if (!ok) throw new Error(what) }
 const failsWith = promise => promise.then(() => null, err => err.message)
@@ -123,14 +122,6 @@ async function answer(as, itemId, decision) {
   return ask
 }
 
-const open = (url, init) => {
-  const u = new URL(url)
-  const port = LOOPBACK[u.hostname]
-  return fetch(port ? `http://127.0.0.1:${port}${u.pathname}${u.search}` : u.href, init)
-}
-const formPost = body => ({
-  method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...asBob }, body: new URLSearchParams(body).toString(),
-})
 
 // Stands in for Bob answering what his supervisor holds under this run's mission: deny when a scope ends in one of these, else allow.
 const bobDenies = new Set()
@@ -138,10 +129,9 @@ function bobAllows(s256) {
   let running = true
   const loop = (async () => {
     while (running) {
-      const res = await fetch(`${BOB_API}/state`, { headers: asBob })
-      for (const r of (await res.json()).reviews.filter(r => r.mission_s256 === s256 && r.status === 'pending')) {
+      for (const r of (await ps.state(bob.id)).reviews.filter(r => r.mission_s256 === s256 && r.status === 'pending')) {
         const deny = r.scopes.some(sc => [...bobDenies].some(end => sc.endsWith(end)))
-        await open(`${PS}/interact`, formPost({ code: r.code, decision: deny ? 'deny' : 'approve' }))
+        await ps.call(`/reviews/${r.id}`, { decision: deny ? 'deny' : 'approve', member: { id: bob.id, name: 'Bob' } })
       }
       await sleep(250)
     }
@@ -391,8 +381,7 @@ await until('the world', world, async () => (await (await fetch(wellKnown)).json
 
 const mission = await requestMission(`I met Alice at the hackathon. Find her in the people network, check whether we should talk, and if so book 30 minutes. (network-check ${Date.now().toString(36)})`, {
   onInteraction: async (url, code) => {
-    const res = await open(url, formPost({ code, decision: 'approve', supervisor: 'rules' }))
-    if (!res.ok) throw new Error(`mission approval ${res.status}`)
+    await ps.answerCode(code, 'approve', { id: bob.id, name: 'Bob' }, { supervisor: 'rules' })
   },
 })
 console.log(`store ${STORE} and world on ${WORLD.AAUTH_PS_PORT}-${WORLD.AAUTH_RESOURCE_PORT}; members Alice, Bob (mapped from ${PS}), Carol; mission ${mission.s256.slice(0, 8)}… approved by Bob, rules only`)

@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 
-// What your own agent needs from you at your person server, served by spike/aauth-mcp/agent-console.mjs at /agent.
+// What your own agents need from you at the person server, served by spike/aauth-mcp/agent-console.mjs at /agent.
 export interface AgentMission {
   kind: 'mission'
   id: string
@@ -17,6 +17,8 @@ export interface AgentMission {
   description: string
   resources: string[]
   pending_until: string
+  // A new agent: approving its first mission makes it yours.
+  claim?: boolean
 }
 
 export interface AgentHold {
@@ -46,22 +48,42 @@ async function call(path: string, body?: unknown): Promise<any> {
 
 const isOpen = (x: AgentRequest) => Date.parse(x.pending_until) > Date.now()
 
-// Oldest first, missions before held requests; the mock console has no /agent, so it stays empty there.
-export function useAgentRequests(): { pending: AgentRequest[]; refresh: () => void } {
+// The code an agent showed, from the interaction link the person server sent it to (?code=).
+const linkCode = () => new URLSearchParams(location.search).get('code')?.trim() || null
+const dropCode = () => {
+  const u = new URL(location.href)
+  u.searchParams.delete('code')
+  history.replaceState(null, '', u)
+}
+
+// The linked request first, then oldest first, missions before held requests; the mock console has no /agent, so it stays empty there.
+export function useAgentRequests(): { pending: AgentRequest[]; refresh: () => void; codeError: string | null } {
   const [pending, setPending] = useState<AgentRequest[]>([])
+  const [code, setCode] = useState(linkCode)
+  const [codeError, setCodeError] = useState<string | null>(null)
   const refresh = useCallback(() => {
     if (import.meta.env.VITE_API !== 'live') return
-    call('/agent/state').then(
-      (s: { missions?: AgentMission[]; holds?: AgentHold[] }) => setPending([...(s.missions ?? []), ...(s.holds ?? [])].filter(isOpen)),
-      () => {},
+    const linked: Promise<AgentRequest | null> = code
+      ? call(`/agent/code/${encodeURIComponent(code)}`).then(
+        (r: AgentRequest) => r,
+        (e: Error) => { setCodeError(e.message); setCode(null); dropCode(); return null },
+      )
+      : Promise.resolve(null)
+    Promise.all([linked, call('/agent/state').catch(() => ({}))]).then(
+      ([first, s]: [AgentRequest | null, { missions?: AgentMission[]; holds?: AgentHold[] }]) => {
+        if (code && !first) return
+        const rest = [...(s.missions ?? []), ...(s.holds ?? [])].filter((x) => x.id !== first?.id)
+        setPending([...(first ? [first] : []), ...rest].filter(isOpen))
+      },
     )
-  }, [])
+  }, [code])
   useEffect(() => {
     refresh()
     const t = setInterval(refresh, 3000)
     return () => clearInterval(t)
   }, [refresh])
-  return { pending, refresh }
+  const done = useCallback(() => { if (code) { setCode(null); dropCode() } refresh() }, [code, refresh])
+  return { pending, refresh: done, codeError }
 }
 
 function useDecision(path: string, refresh: () => void) {
@@ -133,9 +155,10 @@ function MissionCard({ m, refresh }: { m: AgentMission; refresh: () => void }) {
     <>
       <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 pb-28">
         <Card>
-          <Header icon={<BotIcon className="size-5" />} title="Your agent wants to start a mission" agent={m.agent} />
+          <Header icon={<BotIcon className="size-5" />} title={m.claim ? 'A new agent wants to start a mission' : 'Your agent wants to start a mission'} agent={m.agent} />
           <CardContent>
             <Code code={m.code} />
+            {m.claim ? <p className="mt-3 text-sm text-muted-foreground">Approving makes this agent yours: its later missions come to you alone.</p> : null}
           </CardContent>
         </Card>
 
@@ -182,8 +205,8 @@ function MissionCard({ m, refresh }: { m: AgentMission; refresh: () => void }) {
         busy={busy}
         yes="Approve"
         disabled={!text.trim()}
-        onDeny={() => decide({ decision: 'deny' })}
-        onYes={() => decide({ decision: 'approve', description: text.trim(), rules_only: rulesOnly })}
+        onDeny={() => decide({ decision: 'deny', code: m.code })}
+        onYes={() => decide({ decision: 'approve', description: text.trim(), rules_only: rulesOnly, code: m.code })}
       />
     </>
   )

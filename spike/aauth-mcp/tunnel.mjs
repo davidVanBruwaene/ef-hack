@@ -12,7 +12,6 @@ const SERVERS = {
   agent: { id: AGENT, port: PORTS.agent, metadata: '/.well-known/aauth-agent.json', what: "Bob's agent provider" },
   resource: { id: RESOURCE, port: PORTS.resource, metadata: '/.well-known/aauth-resource.json', what: "Alice's server" },
 }
-// mockin's port is absent on purpose: only the front on PORTS.ps may reach it.
 const SIDES = {
   bob: { label: "Bob's", tunnel: 'parley-bob', servers: [SERVERS.ps, SERVERS.agent] },
   alice: { label: "Alice's", tunnel: 'parley-alice', servers: [SERVERS.resource] },

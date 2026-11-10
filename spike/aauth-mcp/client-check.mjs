@@ -1,24 +1,20 @@
-// Plays Bob's agent through proxy.mjs, Bob on his approval page, and Alice through her console API. Usage: node client-check.mjs [case ...]
+// Plays Bob's agent through proxy.mjs, Bob answering at his person server as the console would, and Alice through her console API. Usage: node client-check.mjs [case ...]
 import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { consoleToken } from './alice-state.mjs'
-import { consoleToken as bobConsoleToken } from './bob-state.mjs'
-import { BOB_NAME, DEFAULT_MISSION, LOOPBACK, PORTS, PS, RESOURCE } from './config.mjs'
+import { DEFAULT_MISSION, LOOPBACK, PORTS, PS, RESOURCE } from './config.mjs'
 import { requestMission } from './missions.mjs'
+import { psApi } from './ps-api.mjs'
 import { randomId, sha256 } from './store.mjs'
 
 const PROXY = fileURLToPath(new URL('./proxy.mjs', import.meta.url))
 const ALICE_API = LOOPBACK[new URL(RESOURCE).hostname] ? `http://127.0.0.1:${PORTS.resource}/api` : `${RESOURCE}/api`
-const BOB_API = LOOPBACK[new URL(PS).hostname] ? `http://127.0.0.1:${PORTS.ps}/api` : `${PS}/api`
 const token = consoleToken()
-const bobToken = bobConsoleToken()
+const ps = psApi()
+// The member the checks answer as: the store sign-in the console server would vouch for.
+const BOB = { id: 'check-bob', name: 'Bob' }
 const sleep = ms => new Promise(r => setTimeout(r, ms))
-// Bob's console token is the authenticated channel a script answers through; the code alone answers nothing.
-const asBob = { authorization: `Bearer ${bobToken}` }
-const formPost = (body, headers = {}) => ({
-  method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body: new URLSearchParams(body).toString(),
-})
 
 // A link as Bob's phone would open it: through loopback for *.aauth.test, else at its public URL.
 const open = (url, init) => {
@@ -27,12 +23,11 @@ const open = (url, init) => {
   return fetch(port ? `http://127.0.0.1:${port}${u.pathname}${u.search}` : u.href, init)
 }
 
-// Stands in for Bob scanning the QR code, checking the code, and answering as himself.
+// Stands in for Bob following the interaction link, signed in, and answering as himself.
 async function bob(url, code, decision) {
-  const page = await open(`${url}?code=${encodeURIComponent(code)}`)
-  if (!page.ok || !(await page.text()).includes(code)) throw new Error(`approval page ${page.status}`)
-  const res = await open(url, formPost({ code, decision, supervisor: 'rules' }, asBob))
-  if (!res.ok) throw new Error(`approval POST ${res.status}`)
+  const link = await open(`${url}?code=${encodeURIComponent(code)}`, { redirect: 'manual' })
+  if (![200, 303].includes(link.status)) throw new Error(`interaction link answered ${link.status}`)
+  await ps.answerCode(code, decision, BOB, { supervisor: 'rules' })
 }
 
 // Stands in for Bob allowing whatever the supervisor holds under this run's mission, except the scopes a case answers itself.
@@ -41,19 +36,19 @@ function bobAllowsTheRest(s256) {
   let running = true
   const loop = (async () => {
     while (running) {
-      const held = (await call(BOB_API, bobToken, '/state')).reviews
+      const held = (await ps.state(BOB.id)).reviews
         .filter(r => r.mission_s256 === s256 && r.status === 'pending' && !r.scopes.some(sc => answeredByCases.has(sc)))
-      for (const r of held) await open(`${PS}/interact`, formPost({ code: r.code, decision: 'approve' }, asBob))
+      for (const r of held) await ps.call(`/reviews/${r.id}`, { decision: 'approve', member: BOB })
       await sleep(250)
     }
   })()
   return async () => { running = false; await loop.catch(() => {}) }
 }
 
-// Plays the agent approving its own mission with the code it was handed, then Bob denying it.
+// Plays the agent answering its own mission with the code it was handed, without the console's token, then Bob denying it.
 async function selfApprove(url, code) {
-  const res = await open(url, formPost({ code, decision: 'approve' }))
-  if (res.status !== 401) throw new Error(`the agent's own approval got ${res.status}, not 401`)
+  const res = await open(`${PS}/api/codes/${encodeURIComponent(code)}`)
+  if (res.status !== 401) throw new Error(`the agent's own lookup got ${res.status}, not 401`)
   await bob(url, code, 'deny')
 }
 
@@ -68,16 +63,15 @@ async function call(base, bearer, path, body) {
 }
 const api = (path, body) => call(ALICE_API, token, path, body)
 
-// Stands in for Bob answering, on his page, a request his supervisor held for him.
+// Stands in for Bob answering, in the console, a request his supervisor held for him.
 async function bobReview(s256, scope, decision, reason) {
   for (let i = 0; i < 150; i++) {
-    const review = (await call(BOB_API, bobToken, '/state')).reviews
+    const review = (await ps.state(BOB.id)).reviews
       .find(r => r.mission_s256 === s256 && r.scopes.includes(scope) && r.status === 'pending')
     if (review) {
       if (reason && review.justification !== reason) throw new Error(`the review shows justification ${JSON.stringify(review.justification)}, not the call's reason`)
       await sleep(300)
-      const res = await open(`${PS}/interact`, formPost({ code: review.code, decision }, asBob))
-      if (!res.ok) throw new Error(`review POST ${res.status}`)
+      await ps.call(`/reviews/${review.id}`, { decision, member: BOB })
       return `the supervisor held ${scope}${reason ? ' with the agent\'s reason' : ''} and Bob answered ${decision}`
     }
     await sleep(200)
@@ -156,8 +150,8 @@ async function runCase(name, approved) {
   const s256 = c.mission === undefined ? approved.s256 : c.mission === '' ? '' : sha256(randomId('m'))
   let revoked
   if (c.revoke) {
-    revoked = (await api('/state')).requesters.find(r => r.label === BOB_NAME && r.ps === PS)?.id
-    if (!revoked) throw new Error(`${BOB_NAME} is not a requester yet; run another case first`)
+    revoked = (await api('/state')).requesters.find(r => r.label === BOB.name && r.ps === PS)?.id
+    if (!revoked) throw new Error(`${BOB.name} is not a requester yet; run another case first`)
     await api(`/requesters/${revoked}`, { status: 'revoked' })
   }
   const transport = new StdioClientTransport({
