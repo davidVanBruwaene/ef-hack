@@ -205,17 +205,20 @@ async function applyWrite(w) {
   const r = await (w.item_id ? people.changeItem(w.owner, w.item_id, { value: w.after.value, rule: w.after.rule }) : people.addItem(w.owner, w.after))
     .catch(err => ({ error: err.code ?? err.message }))
   const done = state.settleWrite(w.id, r)
+  const name = writtenId(done) ?? w.after.label
   state.disclose({
     owner: w.owner, requester: w.requester, agent: w.agent, mission_s256: w.mission_s256, tool: 'update_context',
-    query: `${w.item_id ? 'change' : 'add'} ${done.item_id ?? w.after.label}`, disclosed: [], withheld: [],
-    decided_by: w.asked ? 'owner' : 'rule', reason: w.reason ?? '', decisions: { [done.item_id ?? w.after.label]: done.status },
+    query: `${w.item_id ? 'change' : 'add'} ${name}`, disclosed: [], withheld: [],
+    decided_by: w.asked ? 'owner' : 'rule', reason: w.reason ?? '', decisions: { [name]: done.status },
   })
-  log(`${w.item_id ? 'changed' : 'added'} ${done.item_id ?? w.after.label} for ${short(w.owner)}: ${done.status}${done.error ? ` (${done.error})` : ''}`)
+  log(`${w.item_id ? 'changed' : 'added'} ${name} for ${short(w.owner)}: ${done.status}${done.error ? ` (${done.error})` : ''}`)
   return done
 }
 
+const writtenId = w => w.saved_id ?? w.item_id ?? null
+
 function writeAnswer(w) {
-  const item = { id: w.item_id ?? null, label: w.after.label, value: w.after.value, rule: w.after.rule }
+  const item = { id: writtenId(w), label: w.after.label, value: w.after.value, rule: w.after.rule }
   if (w.status === 'saved') return text({ status: 'saved', item })
   if (w.status === 'denied') return text({ status: 'declined', item, note: 'Your member declined this change.' })
   if (w.status === 'failed') return failure(w.error ?? 'write_failed', `The store did not save it: ${w.error}.`)
@@ -318,6 +321,8 @@ function networkServer({ auth, requester, member, agent, scopes, refused }) {
     if (!id && (!label?.trim() || !value?.trim())) return failure('invalid_request', 'A new item needs a label and a value.')
     if (value !== undefined && !LINK.test(value.trim())) return failure('value_must_be_a_link', 'The value must start with https://, http://, mailto: or tel:.')
     const after = { label: before?.label ?? label.trim(), value: (value ?? before.value).trim(), rule: rule ?? before?.network_rule ?? 'only_me' }
+    const same = !id && mine.find(i => i.label === after.label && i.value === after.value && i.network_rule === after.rule)
+    if (same) return text({ status: 'saved', item: { id: same.id, ...after }, note: 'Your person already has this item.' })
     const quiet = after.rule === 'only_me' && (!before || before.network_rule === 'only_me')
     const w = state.proposeWrite({
       owner: member, requester: requester.id, agent, mission_s256: mission, item_id: before?.id ?? null,

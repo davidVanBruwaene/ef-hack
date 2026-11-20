@@ -163,7 +163,8 @@ export function openState(seedUrl) {
     },
     settleWrite(id, result) {
       const w = s.writes.find(x => x.id === id)
-      Object.assign(w, result.error ? { status: 'failed', error: result.error } : { status: 'saved', item_id: result.id, saved_at: now() })
+      // item_id stays the write's target (null for an add), which sameWrite matches repeats on; saved_id is the item as saved.
+      Object.assign(w, result.error ? { status: 'failed', error: result.error } : { status: 'saved', saved_id: result.id, saved_at: now() })
       changed()
       return w
     },

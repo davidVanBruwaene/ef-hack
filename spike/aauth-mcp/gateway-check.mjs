@@ -265,6 +265,14 @@ try {
     check(shown.status === 'saved' && shown.item.id === 'linkedin', `the approved write said ${JSON.stringify(shown)}`)
     const seen = await eli.call('GET', '/network/search?q=Dana')
     check(seen[0]?.items?.some(i => i.value === 'https://linkedin.com/in/dana'), `Eli sees ${JSON.stringify(seen)}`)
+    const again = await call({ label: 'LinkedIn', value: 'https://linkedin.com/in/dana', rule: 'everyone', reason: 'So people I meet can find me' })
+    check(again.status === 'saved' && again.item.id === 'linkedin', `repeating the saved add said ${JSON.stringify(again)}`)
+    const opened = (await alice('/api/state')).json?.writes?.filter(x => x.status === 'pending') ?? []
+    check(!opened.length, `repeating the saved add opened ${JSON.stringify(opened)}`)
+    const site = await call({ label: 'Site', value: 'https://dana.example.org', rule: 'everyone' })
+    check(site.status === 'saved' && site.item.id === 'site', `adding an item Dana already has said ${JSON.stringify(site)}`)
+    const mine = await dana.call('GET', '/me/items')
+    check(mine.filter(i => i.label === 'LinkedIn').length === 1 && mine.filter(i => i.label === 'Site').length === 1, `Dana's items are ${JSON.stringify(mine)}`)
 
     const declining = answerNext('deny')
     const widen = await call({ id: 'notes', rule: 'ask', reason: 'Let people ask for my notes' })
@@ -275,7 +283,7 @@ try {
     check(notes?.rule === 'only_me', `after declining, notes is ${JSON.stringify(notes)}`)
     const theirs = await call({ id: 'site-2', value: 'https://x.example' })
     check(theirs.error === 'not_found', `a missing id said ${JSON.stringify(theirs)}`)
-    return 'Only me saved at once; Everyone saved after Dana confirmed the exact link; widening Only me declined and left alone'
+    return 'Only me saved at once; Everyone saved after Dana confirmed the exact link; repeating a saved add reports its id; widening Only me declined and left alone'
   })
 
   await step('two_members', async () => {
