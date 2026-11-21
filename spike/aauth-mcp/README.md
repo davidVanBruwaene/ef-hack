@@ -17,6 +17,8 @@ It runs on one laptop, or on two laptops behind a Cloudflare Tunnel. No real acc
 
 AAuth server identifiers must be `https` with no port. The local ports can be moved with `AAUTH_PS_PORT`, `AAUTH_RESOURCE_PORT`, and `AAUTH_AGENT_PORT`, to run a second world beside the first. Locally, `loopback.mjs` sends `*.aauth.test` connections to `127.0.0.1` at the socket level. URLs, `Host` headers and signatures all keep the real identifiers. Set `AAUTH_PS`, `AAUTH_RESOURCE` and `AAUTH_AGENT` in `.env` at the repo root to use public hostnames instead.
 
+Both servers refuse a signed request with a body unless its signature covers `content-digest`, so the body is the one the agent signed. The person server does so because -11 requires it there. Alice's server publishes `additional_signature_components: ["content-digest"]` in its metadata. `@hellocoop/httpsig` covers the digest by default whenever it can hash the body, so the agents here need no option for it.
+
 The person server serves:
 - `/.well-known/aauth-person.json` and its signing key at `/aauth/jwks.json`;
 - `/mission`, the -11 `mission_endpoint`;
@@ -69,6 +71,8 @@ The checks need no mission of their own. Each run proposes one and approves it a
 | `node client-check.mjs ask remembered_deny partial` | One call for an item allowed earlier in the mission and one refused earlier | The first comes back and the second is `refused`, in one answer |
 | `npm run check:gateway` | The hosted MCP endpoint with its own store, world and console server (see [The hosted MCP endpoint](#the-hosted-mcp-endpoint)) | `all 14 passed` |
 | `npm run check:network` | The people network, with its own store and world (see [The people network](#the-people-network)) | `all 13 passed` |
+| `npm run check:missions` | -11 conformance for missions, signatures and the supervisor, against a running world | `all 23 passed, 3 skipped` (the skipped ones need Jev, or a mission that ends early) |
+| `npm run check:state` | Writes the member never answers expire, on a throwaway data dir | `all 5 passed` |
 
 To run it from Claude Code, approve a mission (`npm run mission`), then write the MCP config for this checkout (`mcp.json` is gitignored):
 
@@ -140,9 +144,9 @@ With `STORE_URL` set, `alice.mjs` serves every member of the passkey store (`sto
 |---|---|---|
 | `find_people` | `{query?}` | `{people: [{person, name, items: [{id, label, access}]}]}`, for members whose name or Everyone items match. `access` is `shared` or `ask`. No values, and never the caller |
 | `search_context` | `{person, ids?, query?, reason?}` | As with `alice.json`, for the member `person`, whose id the answer repeats |
-| `update_context` | `{id?, label?, value?, rule?, reason?}` | `{status, item}`. Adds an item to the caller's own profile, or changes one's value or rule; never another member's. `status` is `saved`, `pending`, `declined`, or an error |
+| `update_context` | `{id?, label?, value?, rule?, reason?}` | `{status, write_id, item}`. Adds an item to the caller's own profile, or changes one's value or rule; never another member's. `status` is `saved`, `pending`, `declined`, `expired`, or an error |
 
-- `update_context` needs the scope `context:write`, which the person server grants when the mission names this server, as for `context`. A write whose result is visible to no one (Only me, on a new or Only me item) is saved at once. Any other write waits up to 55 s for the member to confirm its exact label, link and rule in the console; the agent calls again with the same arguments for one still pending. Each write lands in the disclosure log as tool `update_context`. The store saves it through `POST /internal/users/:id/items` and `POST /internal/users/:id/items/:item`.
+- `update_context` needs the scope `context:write`, which the person server grants when the mission names this server, as for `context`. A write whose result is visible to no one (Only me, on a new or Only me item) is saved at once. Any other write waits up to 55 s for the member to confirm its exact label, link and rule in the console; the agent calls again with the same arguments for one still pending. A write the member has not answered in 24 hours (`ALICE_WRITE_PENDING_S`) expires: its card leaves the console, answering it gets `409 expired`, and the same call again opens a new one. Each write lands in the disclosure log as tool `update_context`. The store saves it through `POST /internal/users/:id/items` and `POST /internal/users/:id/items/:item`.
 
 - Rules are the store's: each item's rule for everyone, or the rule its owner set for this caller. Only-me items never appear.
 - Item ids are the store's. Scopes name the owner readably, `item:<name>-<hex>/<item id>`: `<name>` is the owner's name in lowercase with hyphens, and `<hex>` is the first six hex digits of the member id. The console shows whose item each scope is, and his supervisor judges each owner's items apart.

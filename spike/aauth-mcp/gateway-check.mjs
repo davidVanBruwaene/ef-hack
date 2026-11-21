@@ -262,7 +262,7 @@ try {
     const shown = await call({ label: 'LinkedIn', value: 'https://linkedin.com/in/dana', rule: 'everyone', reason: 'So people I meet can find me' })
     const { w } = await approving
     check(w.after.value === 'https://linkedin.com/in/dana' && w.after.rule === 'everyone' && !w.before, `Dana's console showed ${JSON.stringify(w)}`)
-    check(shown.status === 'saved' && shown.item.id === 'linkedin', `the approved write said ${JSON.stringify(shown)}`)
+    check(shown.status === 'saved' && shown.item.id === 'linkedin' && shown.write_id === w.id, `the approved write said ${JSON.stringify(shown)}`)
     const seen = await eli.call('GET', '/network/search?q=Dana')
     check(seen[0]?.items?.some(i => i.value === 'https://linkedin.com/in/dana'), `Eli sees ${JSON.stringify(seen)}`)
     const again = await call({ label: 'LinkedIn', value: 'https://linkedin.com/in/dana', rule: 'everyone', reason: 'So people I meet can find me' })
@@ -278,7 +278,7 @@ try {
     const widen = await call({ id: 'notes', rule: 'ask', reason: 'Let people ask for my notes' })
     const d = await declining
     check(d.w.before?.rule === 'only_me' && d.w.after.rule === 'ask', `the widening showed ${JSON.stringify(d.w)}`)
-    check(widen.status === 'declined', `the declined write said ${JSON.stringify(widen)}`)
+    check(widen.status === 'declined' && widen.write_id === d.w.id, `the declined write said ${JSON.stringify(widen)}`)
     const notes = (await dana.call('GET', '/me/items')).find(i => i.id === 'notes')
     check(notes?.rule === 'only_me', `after declining, notes is ${JSON.stringify(notes)}`)
     const theirs = await call({ id: 'site-2', value: 'https://x.example' })

@@ -183,7 +183,8 @@ function WriteCard({ write, refresh }: { write: Write; refresh: () => void }) {
       await api.decideWrite(write.id, decision)
       refresh()
     } catch (e) {
-      setError((e as Error).message)
+      const message = (e as Error).message
+      setError(/ 409 expired$/.test(message) ? 'This change expired before you answered. Your agent can ask again.' : message)
       setBusy(false)
     }
   }

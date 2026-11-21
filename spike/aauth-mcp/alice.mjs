@@ -87,7 +87,7 @@ async function requiredScopes(rid, member, message, refused) {
 }
 
 async function aauthGate(req, url, raw, message, key, sign) {
-  const v = await verifySignedRequest(req, url, raw, { resource: RESOURCE, accept: ['agent', 'person', 'auth'] })
+  const v = await verifySignedRequest(req, url, raw, { resource: RESOURCE, accept: ['agent', 'person', 'auth'], requireContentDigest: true })
   if (v.error === 'invalid_signature') {
     log('✗ unsigned request or bad signature', v.detail)
     return reject(401, 'agent_token_required', buildAAuthHeader('agent-token'))
@@ -219,10 +219,11 @@ const writtenId = w => w.saved_id ?? w.item_id ?? null
 
 function writeAnswer(w) {
   const item = { id: writtenId(w), label: w.after.label, value: w.after.value, rule: w.after.rule }
-  if (w.status === 'saved') return text({ status: 'saved', item })
-  if (w.status === 'denied') return text({ status: 'declined', item, note: 'Your member declined this change.' })
+  if (w.status === 'saved') return text({ status: 'saved', write_id: w.id, item })
+  if (w.status === 'denied') return text({ status: 'declined', write_id: w.id, item, note: 'Your member declined this change.' })
+  if (w.status === 'expired') return text({ status: 'expired', write_id: w.id, item, note: 'Your member did not answer in time. Call update_context again to ask again.' })
   if (w.status === 'failed') return failure(w.error ?? 'write_failed', `The store did not save it: ${w.error}.`)
-  return text({ status: 'pending', item, note: 'Your member has not answered in their Parley console yet. Call update_context again with the same arguments later.' })
+  return text({ status: 'pending', write_id: w.id, item, note: 'Your member has not answered in their Parley console yet. Call update_context again with the same arguments later.' })
 }
 
 function contextServer({ auth, requester, agent, scopes, refused }) {
@@ -394,6 +395,7 @@ async function consoleApi(req, res, url, token) {
     if (!['approve', 'deny'].includes(body.decision)) return bad('decision must be approve or deny')
     const w = state.decideWrite(id, body.decision, owner)
     if (!w) return reply(404, { error: 'not_found' })
+    if (w.status === 'expired') return reply(409, { error: 'expired', write: w })
     if (w.status === 'approved') await applyWrite(w)
     log(`${who} ${body.decision === 'approve' ? 'approved' : 'declined'} write ${id}`)
     return reply(200, { ok: true, write: state.write(id), rev: state.rev() })
@@ -443,7 +445,7 @@ export async function startAlice() {
   await listen(PORTS.resource, async (req, res) => {
     const url = new URL(req.url ?? '/', RESOURCE)
     if (url.pathname === '/.well-known/aauth-resource.json') {
-      return json(res, 200, { issuer: RESOURCE, name: people ? 'The people network' : `${first}'s context`, jwks_uri: `${RESOURCE}/jwks.json` })
+      return json(res, 200, { issuer: RESOURCE, name: people ? 'The people network' : `${first}'s context`, jwks_uri: `${RESOURCE}/jwks.json`, additional_signature_components: ['content-digest'] })
     }
     if (url.pathname === '/jwks.json') return json(res, 200, jwks)
     if (url.pathname.startsWith('/api/')) return consoleApi(req, res, url, token)

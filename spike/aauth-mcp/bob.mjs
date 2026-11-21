@@ -69,7 +69,7 @@ const pendingHeaders = m => ({ location: `${PS}/mission/pending/${m.id}`, ...int
 const reviewHeaders = r => ({ location: `${PS}/review/pending/${r.id}`, ...interaction(r) })
 
 async function agentOf(req, url, raw) {
-  const v = await verifySignedRequest(req, url, raw, { resource: PS, accept: ['agent'] })
+  const v = await verifySignedRequest(req, url, raw, { resource: PS, accept: ['agent'], requireContentDigest: true })
   return v.error ? v : { agent: v.token.sub, jwk: v.token.cnf.jwk, exp: v.token.exp, jkt: v.sig.thumbprint }
 }
 

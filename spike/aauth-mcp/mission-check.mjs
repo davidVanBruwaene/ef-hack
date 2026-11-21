@@ -1,6 +1,7 @@
 // -11 conformance checks for missions at Bob's person server and for the supervisor on its auth-token path, run against a running world. Usage: [JEV_LIVE=1] node mission-check.mjs [case ...]
 import { randomBytes } from 'node:crypto'
-import { createSignedFetch } from '@aauth/agent'
+import { PS_COMPONENTS_BODY, createSignedFetch } from '@aauth/agent'
+import { fetch as httpSigFetch } from '@hellocoop/httpsig'
 import { DWK, SIGNING_ALG, TOKEN_TYP, parseRequirementHeader } from '@aauth/protocol'
 import { SignJWT, decodeJwt } from 'jose'
 import { agentSession } from './agent.mjs'
@@ -200,6 +201,35 @@ const CASES = {
     t.must(r.status === 401, `refuse an unsigned proposal with 401 (§8.1); got ${r.status}`)
     t.must(r.headers['signature-error'], 'say why in a Signature-Error header on the 401 (§11.9.1)')
     return `${r.status} ${r.body?.error ?? ''}`
+  },
+
+  undigested: async t => {
+    const bare = createSignedFetch(session.getKeyMaterial, { contentDigest: 'omit' })
+    const r = await call(bare, meta.mission_endpoint, json({ description: text('undigested') }))
+    t.must(r.status === 401, `refuse a signed proposal whose signature does not cover content-digest with 401 (§10.3); got ${r.status}`)
+    t.must(r.headers['signature-error'], 'say why in a Signature-Error header on the 401 (§11.9.1)')
+    return `${r.status} ${r.body?.error ?? ''}`
+  },
+
+  swapped_body: async t => {
+    const { signingKey, signatureKey } = await session.getKeyMaterial()
+    const signed = json({ description: text('swapped body, as signed') })
+    const { headers } = await httpSigFetch(meta.mission_endpoint, { ...signed, signingKey, signatureKey, components: [...PS_COMPONENTS_BODY], contentDigest: 'require', dryRun: true })
+    const r = await capture(await fetch(meta.mission_endpoint, { method: 'POST', headers, body: JSON.stringify({ description: text('swapped body, as sent') }) }))
+    t.must(r.status === 401, `refuse a proposal whose body is not the one signed with 401 (§10.3); got ${r.status}`)
+    return `${r.status} ${r.body?.error ?? ''}`
+  },
+
+  resource_undigested: async t => {
+    const list = json({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    list.headers.accept = 'application/json, text/event-stream'
+    const bare = await call(createSignedFetch(session.getKeyMaterial, { contentDigest: 'omit' }), `${RESOURCE}/mcp`, list)
+    t.must(bare.status === 401, `have the resource refuse a body its signature does not cover with 401; got ${bare.status}`)
+    const digested = await call(createSignedFetch(session.getKeyMaterial), `${RESOURCE}/mcp`, list)
+    t.must(digested.status === 200, `have the resource answer the same request with content-digest covered; got ${digested.status}`)
+    const rmeta = await (await fetch(`${RESOURCE}/.well-known/aauth-resource.json`)).json()
+    t.must(rmeta.additional_signature_components?.includes('content-digest'), 'have the resource publish content-digest in additional_signature_components')
+    return `${bare.status} without, ${digested.status} with`
   },
 
   no_description: async t => {

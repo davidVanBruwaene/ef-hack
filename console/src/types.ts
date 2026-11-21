@@ -48,7 +48,7 @@ export interface Write {
   before: { value: string; rule: Rule } | null
   after: { label: string; value: string; rule: Rule }
   reason: string
-  status: 'pending' | 'approved' | 'denied' | 'saved' | 'failed'
+  status: 'pending' | 'approved' | 'denied' | 'saved' | 'failed' | 'expired'
   created_at: string
 }
 
