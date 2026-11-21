@@ -17,7 +17,7 @@ It runs on one laptop, or on two laptops behind a Cloudflare Tunnel. No real acc
 
 AAuth server identifiers must be `https` with no port. The local ports can be moved with `AAUTH_PS_PORT`, `AAUTH_RESOURCE_PORT`, and `AAUTH_AGENT_PORT`, to run a second world beside the first. Locally, `loopback.mjs` sends `*.aauth.test` connections to `127.0.0.1` at the socket level. URLs, `Host` headers and signatures all keep the real identifiers. Set `AAUTH_PS`, `AAUTH_RESOURCE` and `AAUTH_AGENT` in `.env` at the repo root to use public hostnames instead.
 
-Both servers refuse a signed request with a body unless its signature covers `content-digest`, so the body is the one the agent signed; the person server also requires `content-type`, as -11 §10.3 does there. The 401 names the missing components in a `Signature-Error` header, `error=invalid_input` with `required_input`. A request with no signature at all still gets `agent_token_required` from Alice's server. Alice's server publishes `additional_signature_components: ["content-digest"]` in its metadata. `@hellocoop/httpsig` covers the digest by default whenever it can hash the body, so the agents here need no option for it.
+Both servers refuse a signed request with a body unless its signature covers `content-digest`, so the body is the one the agent signed; the person server also requires `content-type`, as -11 §10.3 does there. The 401 names the missing components in a `Signature-Error` header, `error=invalid_input` with `required_input`. A request with no signature at all still gets `agent_token_required` from Alice's server. A refusal's description is fixed text, never the verifier's own message, since that can quote what a fetch of the issuer a `Signature-Key` names returned. Alice's server publishes `additional_signature_components: ["content-digest"]` in its metadata. `@hellocoop/httpsig` covers the digest by default whenever it can hash the body, so the agents here need no option for it.
 
 The person server serves:
 - `/.well-known/aauth-person.json` and its signing key at `/aauth/jwks.json`;
@@ -71,7 +71,7 @@ The checks need no mission of their own. Each run proposes one and approves it a
 | `node client-check.mjs ask remembered_deny partial` | One call for an item allowed earlier in the mission and one refused earlier | The first comes back and the second is `refused`, in one answer |
 | `npm run check:gateway` | The hosted MCP endpoint with its own store, world and console server (see [The hosted MCP endpoint](#the-hosted-mcp-endpoint)) | `all 14 passed` |
 | `npm run check:network` | The people network, with its own store and world (see [The people network](#the-people-network)) | `all 13 passed` |
-| `npm run check:missions` | -11 conformance for missions, signatures and the supervisor, against a running world | `all 24 passed, 3 skipped` (the skipped ones need Jev, or a mission that ends early) |
+| `npm run check:missions` | -11 conformance for missions, signatures and the supervisor, against a running world | `all 25 passed, 3 skipped` (the skipped ones need Jev, or a mission that ends early) |
 | `npm run check:state` | Writes the member never answers expire, writes a restart caught mid-save fail, and a bad `ALICE_WRITE_PENDING_S` stops the server, on a throwaway data dir | `all 8 passed` |
 
 To run it from Claude Code, approve a mission (`npm run mission`), then write the MCP config for this checkout (`mcp.json` is gitignored):

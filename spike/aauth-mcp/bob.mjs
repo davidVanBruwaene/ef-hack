@@ -34,12 +34,13 @@ const problem = (res, status, error, detail, extra = {}, headers = {}) => {
   res.end(JSON.stringify({ error, ...(detail ? { detail } : {}), ...extra }))
 }
 
-// §11.9.1: a 401 names the failure in Signature-Error, with the codes of the signature-key draft.
-const unsigned = (res, who) => problem(res, 401, who.error, who.detail, {}, {
-  'signature-error': who.signatureError
-    ? generateSignatureErrorHeader(who.signatureError)
-    : `error=${who.error === 'invalid_signature' ? 'invalid_signature' : /expir/i.test(`${who.error} ${who.detail}`) ? 'expired_jwt' : 'invalid_jwt'}`,
-})
+// §11.9.1: a 401 names the failure in Signature-Error; the detail is only logged, as it can quote a fetch of an attacker-named issuer.
+function unsigned(res, who) {
+  log('✗ refused signed request:', who.error, who.detail)
+  const code = who.error === 'invalid_signature' ? 'invalid_signature' : /expir/i.test(`${who.error} ${who.detail}`) ? 'expired_jwt' : 'invalid_jwt'
+  const detail = who.error === 'invalid_signature' ? 'the request signature did not verify; Signature-Error names why' : 'the token in Signature-Key did not verify'
+  return problem(res, 401, who.error, detail, {}, { 'signature-error': who.signatureError ? generateSignatureErrorHeader(who.signatureError) : `error=${code}` })
+}
 
 // §8.7: the same answer whether the mission does not exist or belongs to another agent.
 const noSuchMission = res => problem(res, 400, 'invalid_request', 'mission_s256 names no mission of this agent')

@@ -1,5 +1,6 @@
 // -11 conformance checks for missions at Bob's person server and for the supervisor on its auth-token path, run against a running world. Usage: [JEV_LIVE=1] node mission-check.mjs [case ...]
 import { randomBytes } from 'node:crypto'
+import { createServer } from 'node:http'
 import { PS_COMPONENTS_BODY, createSignedFetch } from '@aauth/agent'
 import { fetch as httpSigFetch } from '@hellocoop/httpsig'
 import { DWK, SIGNING_ALG, TOKEN_TYP, parseRequirementHeader } from '@aauth/protocol'
@@ -222,6 +223,30 @@ const CASES = {
     const why = r.headers['signature-error'] ?? ''
     t.must(/error=invalid_input/.test(why) && why.includes('"content-type"'), `name invalid_input and content-type in Signature-Error (§11.9.1); got "${why}"`)
     return `${r.status} ${why}`
+  },
+
+  forged_key: async t => {
+    const secret = `SECRET-${randomBytes(6).toString('hex')}`
+    const srv = createServer((q, s) => s.end(q.url.endsWith('/a') ? `${secret}-page` : JSON.stringify({ issuer: secret, jwks_uri: 'x' }))).listen(0, '127.0.0.1')
+    await new Promise(r => srv.on('listening', r))
+    const id = `http://127.0.0.1:${srv.address().port}`
+    try {
+      const seen = []
+      for (const url of [meta.mission_endpoint, `${RESOURCE}/mcp`]) {
+        for (const dwk of ['a', 'b']) {
+          const r = await capture(await fetch(url, { ...json({ jsonrpc: '2.0', id: 1, method: 'ping' }), headers: {
+            'content-type': 'application/json',
+            'signature-key': `sig=jwks_uri;id="${id}";kid="k";dwk="${dwk}"`,
+            'signature-input': `sig=("@method" "signature-key");created=${Math.floor(Date.now() / 1000)}`,
+            signature: 'sig=:AAAA:',
+          } }))
+          t.must(r.status === 401, `refuse a Signature-Key naming an outside issuer with 401; ${url} got ${r.status}`)
+          t.must(!r.raw.includes(secret) && !JSON.stringify(r.headers).includes(secret), `keep what the named issuer returned out of the answer; ${url} answered ${r.raw}`)
+          seen.push(r.status)
+        }
+      }
+      return `${seen.join(', ')}, nothing the issuer returned in any answer`
+    } finally { srv.close() }
   },
 
   swapped_body: async t => {

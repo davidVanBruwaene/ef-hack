@@ -39,6 +39,7 @@ const aliceOnly = { items: undefined, owner: undefined, name: ownerName, first }
 // mockin's auth token names the agent's key (cnf), not the agent, so remember who signed with each key.
 const agentByKey = new Map()
 
+// Descriptions here are fixed text: library errors can quote what a fetch of an attacker-named issuer returned.
 const reject = (status, error, requirement, description, headers = {}) => ({
   ok: false,
   status,
@@ -95,11 +96,11 @@ async function aauthGate(req, url, raw, message, key, sign) {
   }
   if (v.error === 'invalid_signature') {
     log('✗ bad signature', v.detail)
-    return reject(401, 'invalid_signature', undefined, v.detail, { 'signature-error': generateSignatureErrorHeader(v.signatureError ?? { error: 'invalid_signature' }) })
+    return reject(401, 'invalid_signature', undefined, 'The request signature did not verify; Signature-Error names why.', { 'signature-error': generateSignatureErrorHeader(v.signatureError ?? { error: 'invalid_signature' }) })
   }
   if (v.error) {
     log('✗ token rejected:', v.error, v.detail)
-    return reject(401, v.error, buildAAuthHeader('agent-token'), v.detail)
+    return reject(401, v.error, buildAAuthHeader('agent-token'), 'The token in Signature-Key did not verify.')
   }
   const { sig, token } = v
 
