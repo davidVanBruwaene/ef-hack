@@ -16,6 +16,13 @@ export interface Api {
 // getState throws this when the store has no session for this browser.
 export class SignedOut extends Error {}
 
+// A refused /api call, with the server's status, error code and description.
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string, readonly description?: string) {
+    super(message)
+  }
+}
+
 const token = () => localStorage.getItem('console_token') ?? ''
 
 // Signed in to the store, the sid cookie picks the owner at /api, and a bearer would override it.
@@ -31,7 +38,7 @@ async function call(path: string, body?: unknown): Promise<unknown> {
     body: body ? JSON.stringify(body) : undefined,
   })
   const json = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(`${path}: ${res.status}${json.error ? ` ${json.error}` : ''}`)
+  if (!res.ok) throw new ApiError(`${path}: ${res.status}${json.error ? ` ${json.error}` : ''}`, res.status, json.error, json.error_description)
   return json
 }
 

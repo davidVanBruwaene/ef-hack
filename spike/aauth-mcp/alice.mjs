@@ -1,4 +1,5 @@
 // Alice's side: the AAuth-protected MCP server holding Alice's links, or every member's on the people network when STORE_URL is set, and the /api owner consoles call.
+import { generateSignatureErrorHeader } from '@hellocoop/httpsig'
 import { SignJWT } from 'jose'
 import { z } from 'zod'
 import { buildAAuthHeader, createResourceToken } from '@aauth/resource'
@@ -38,11 +39,11 @@ const aliceOnly = { items: undefined, owner: undefined, name: ownerName, first }
 // mockin's auth token names the agent's key (cnf), not the agent, so remember who signed with each key.
 const agentByKey = new Map()
 
-const reject = (status, error, requirement, description) => ({
+const reject = (status, error, requirement, description, headers = {}) => ({
   ok: false,
   status,
   body: { error, ...(description ? { error_description: description } : {}) },
-  headers: requirement ? { 'aauth-requirement': requirement } : {},
+  headers: { ...(requirement ? { 'aauth-requirement': requirement } : {}), ...headers },
 })
 
 const DISCOVERY = new Set(['initialize', 'ping', 'tools/list'])
@@ -87,10 +88,14 @@ async function requiredScopes(rid, member, message, refused) {
 }
 
 async function aauthGate(req, url, raw, message, key, sign) {
-  const v = await verifySignedRequest(req, url, raw, { resource: RESOURCE, accept: ['agent', 'person', 'auth'], requireContentDigest: true })
-  if (v.error === 'invalid_signature') {
-    log('✗ unsigned request or bad signature', v.detail)
+  const v = await verifySignedRequest(req, url, raw, { resource: RESOURCE, accept: ['agent', 'person', 'auth'] })
+  if (v.error === 'invalid_signature' && !v.signed) {
+    log('✗ unsigned request', v.detail)
     return reject(401, 'agent_token_required', buildAAuthHeader('agent-token'))
+  }
+  if (v.error === 'invalid_signature') {
+    log('✗ bad signature', v.detail)
+    return reject(401, 'invalid_signature', undefined, v.detail, { 'signature-error': generateSignatureErrorHeader(v.signatureError ?? { error: 'invalid_signature' }) })
   }
   if (v.error) {
     log('✗ token rejected:', v.error, v.detail)
@@ -141,7 +146,7 @@ async function aauthGate(req, url, raw, message, key, sign) {
 }
 
 const text = body => ({ content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] })
-const failure = (error, description) => ({ ...text({ error, error_description: description }), isError: true })
+const failure = (error, description, extra = {}) => ({ ...text({ error, error_description: description, ...extra }), isError: true })
 
 // search_context for one owner's items: alice.json's, or a member's from the store.
 async function answerSearch({ requester, agent, mission, scopes, refused, ids, query, reason, list }) {
@@ -200,10 +205,29 @@ async function answerSearch({ requester, agent, mission, scopes, refused, ids, q
   return text(out)
 }
 
+// Saves against the item as it is now: a repeat that already landed is not saved twice, and an item edited since it was asked is left alone.
+async function saveWrite(w) {
+  const mine = await people.itemsOf(w.owner, w.owner)
+  if (!w.item_id) {
+    const there = mine.find(i => i.label === w.after.label && i.value === w.after.value && i.network_rule === w.after.rule)
+    return there ? { id: there.id } : people.addItem(w.owner, w.after)
+  }
+  const current = mine.find(i => i.id === w.item_id)
+  if (!current) return { error: 'item_gone' }
+  if (current.value === w.after.value && current.network_rule === w.after.rule) return { id: current.id }
+  if (w.before && (current.value !== w.before.value || current.network_rule !== w.before.rule)) return { error: 'item_changed' }
+  return people.changeItem(w.owner, w.item_id, { value: w.after.value, rule: w.after.rule })
+}
+
+const WRITE_FAILURES = {
+  item_changed: 'The item changed after this was asked, so nothing was saved.',
+  item_gone: 'The item was deleted after this was asked, so nothing was saved.',
+  interrupted: 'The server restarted while saving it; ask again and it will check what the store holds.',
+}
+
 // Saves a write in the store and records it; the store's answer is the item as saved, or why not.
 async function applyWrite(w) {
-  const r = await (w.item_id ? people.changeItem(w.owner, w.item_id, { value: w.after.value, rule: w.after.rule }) : people.addItem(w.owner, w.after))
-    .catch(err => ({ error: err.code ?? err.message }))
+  const r = await saveWrite(w).catch(err => ({ error: err.code ?? err.message }))
   const done = state.settleWrite(w.id, r)
   const name = writtenId(done) ?? w.after.label
   state.disclose({
@@ -222,7 +246,8 @@ function writeAnswer(w) {
   if (w.status === 'saved') return text({ status: 'saved', write_id: w.id, item })
   if (w.status === 'denied') return text({ status: 'declined', write_id: w.id, item, note: 'Your member declined this change.' })
   if (w.status === 'expired') return text({ status: 'expired', write_id: w.id, item, note: 'Your member did not answer in time. Call update_context again to ask again.' })
-  if (w.status === 'failed') return failure(w.error ?? 'write_failed', `The store did not save it: ${w.error}.`)
+  if (w.status === 'approved') return text({ status: 'approved', write_id: w.id, item, note: 'Your member approved this change and it is being saved. Call update_context again with the same arguments in a moment.' })
+  if (w.status === 'failed') return failure(w.error ?? 'write_failed', WRITE_FAILURES[w.error] ?? `The store did not save it: ${w.error}.`, { write_id: w.id })
   return text({ status: 'pending', write_id: w.id, item, note: 'Your member has not answered in their Parley console yet. Call update_context again with the same arguments later.' })
 }
 
@@ -323,15 +348,15 @@ function networkServer({ auth, requester, member, agent, scopes, refused }) {
     if (value !== undefined && !LINK.test(value.trim())) return failure('value_must_be_a_link', 'The value must start with https://, http://, mailto: or tel:.')
     const after = { label: before?.label ?? label.trim(), value: (value ?? before.value).trim(), rule: rule ?? before?.network_rule ?? 'only_me' }
     const same = !id && mine.find(i => i.label === after.label && i.value === after.value && i.network_rule === after.rule)
-    if (same) return text({ status: 'saved', item: { id: same.id, ...after }, note: 'Your person already has this item.' })
+    if (same) return text({ status: 'saved', write_id: null, item: { id: same.id, ...after }, note: 'Your person already has this item.' })
     const quiet = after.rule === 'only_me' && (!before || before.network_rule === 'only_me')
     const w = state.proposeWrite({
       owner: member, requester: requester.id, agent, mission_s256: mission, item_id: before?.id ?? null,
       before: before ? { value: before.value, rule: before.network_rule } : null, after, reason: reason ?? '', asked: !quiet,
     })
     if (w.status === 'pending' && quiet) {
-      state.decideWrite(w.id, 'approve')
-      return writeAnswer(await applyWrite(w))
+      const d = state.decideWrite(w.id, 'approve')
+      return writeAnswer(d.status === 'approved' ? await applyWrite(d) : d)
     }
     if (w.status === 'pending') {
       log(`asking ${short(member)} to confirm ${w.item_id ? `a change to ${w.item_id}` : `a new item ${after.label}`}; holding the call up to ${ASK_WAIT_MS / 1000}s`)
@@ -393,12 +418,24 @@ async function consoleApi(req, res, url, token) {
 
   if (kind === 'writes' && id && people) {
     if (!['approve', 'deny'].includes(body.decision)) return bad('decision must be approve or deny')
+    const open = state.write(id)
+    if (!open || (owner !== undefined && open.owner !== owner)) return reply(404, { error: 'not_found' })
+    if (open.status !== 'pending') {
+      const expired = open.status === 'expired'
+      return reply(409, {
+        error: expired ? 'expired' : 'not_pending',
+        status: open.status,
+        error_description: expired ? 'This change expired before you answered. Your agent can ask again.' : `This change was already answered (${open.status}).`,
+        write: open,
+      })
+    }
     const w = state.decideWrite(id, body.decision, owner)
-    if (!w) return reply(404, { error: 'not_found' })
-    if (w.status === 'expired') return reply(409, { error: 'expired', write: w })
-    if (w.status === 'approved') await applyWrite(w)
     log(`${who} ${body.decision === 'approve' ? 'approved' : 'declined'} write ${id}`)
-    return reply(200, { ok: true, write: state.write(id), rev: state.rev() })
+    const done = w.status === 'approved' ? await applyWrite(w) : w
+    if (done.status === 'failed' && WRITE_FAILURES[done.error]) {
+      return reply(409, { error: done.error, status: 'failed', error_description: WRITE_FAILURES[done.error], write: done })
+    }
+    return reply(200, { ok: true, write: done, rev: state.rev() })
   }
 
   if (kind === 'asks') {

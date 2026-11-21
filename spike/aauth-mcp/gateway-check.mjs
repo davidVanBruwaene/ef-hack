@@ -281,9 +281,30 @@ try {
     check(widen.status === 'declined' && widen.write_id === d.w.id, `the declined write said ${JSON.stringify(widen)}`)
     const notes = (await dana.call('GET', '/me/items')).find(i => i.id === 'notes')
     check(notes?.rule === 'only_me', `after declining, notes is ${JSON.stringify(notes)}`)
+    const twice = await alice(`/api/writes/${d.w.id}`, { decision: 'approve' })
+    check(twice.status === 409 && twice.json?.error === 'not_pending', `approving the declined write again got ${twice.status} ${JSON.stringify(twice.json)}`)
+    check((await dana.call('GET', '/me/items')).find(i => i.id === 'notes')?.rule === 'only_me', 'a second answer to a declined write saved it')
+
+    const stale = (async () => {
+      for (let i = 0; i < 100; i++) {
+        const w = (await alice('/api/state')).json?.writes?.find(x => x.status === 'pending')
+        if (w) {
+          await dana.call('POST', '/me/items/notes', { rule: 'ask' })
+          return { w, r: await alice(`/api/writes/${w.id}`, { decision: 'approve' }) }
+        }
+        await sleep(200)
+      }
+      throw new Error('the write never reached Dana\'s console')
+    })()
+    const widened = await call({ id: 'notes', rule: 'everyone', reason: 'Show my notes to everyone' })
+    const s = await stale
+    check(s.r.status === 409 && s.r.json?.error === 'item_changed', `approving after Dana changed notes got ${s.r.status} ${JSON.stringify(s.r.json)}`)
+    check(widened.error === 'item_changed' && widened.write_id === s.w.id, `the stale write said ${JSON.stringify(widened)}`)
+    const kept = (await dana.call('GET', '/me/items')).find(i => i.id === 'notes')
+    check(kept?.rule === 'ask', `a stale approval overwrote Dana's own change: notes is ${JSON.stringify(kept)}`)
     const theirs = await call({ id: 'site-2', value: 'https://x.example' })
     check(theirs.error === 'not_found', `a missing id said ${JSON.stringify(theirs)}`)
-    return 'Only me saved at once; Everyone saved after Dana confirmed the exact link; repeating a saved add reports its id; widening Only me declined and left alone'
+    return 'Only me saved at once; Everyone saved after Dana confirmed the exact link; repeating a saved add reports its id; widening Only me declined and left alone; a second answer refused; an approval after Dana changed the item refused'
   })
 
   await step('two_members', async () => {

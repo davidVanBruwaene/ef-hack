@@ -1,4 +1,5 @@
 // The person server for every member: missions, the supervisor on auth tokens, and person and auth tokens for the member each mission belongs to; plus the agent provider.
+import { generateSignatureErrorHeader } from '@hellocoop/httpsig'
 import { decodeJwt } from 'jose'
 import { consoleToken, openBobState, tokenMatches } from './bob-state.mjs'
 import { AGENT, PORTS, PS } from './config.mjs'
@@ -35,7 +36,9 @@ const problem = (res, status, error, detail, extra = {}, headers = {}) => {
 
 // §11.9.1: a 401 names the failure in Signature-Error, with the codes of the signature-key draft.
 const unsigned = (res, who) => problem(res, 401, who.error, who.detail, {}, {
-  'signature-error': `error=${who.error === 'invalid_signature' ? 'invalid_signature' : /expir/i.test(`${who.error} ${who.detail}`) ? 'expired_jwt' : 'invalid_jwt'}`,
+  'signature-error': who.signatureError
+    ? generateSignatureErrorHeader(who.signatureError)
+    : `error=${who.error === 'invalid_signature' ? 'invalid_signature' : /expir/i.test(`${who.error} ${who.detail}`) ? 'expired_jwt' : 'invalid_jwt'}`,
 })
 
 // §8.7: the same answer whether the mission does not exist or belongs to another agent.
@@ -69,7 +72,7 @@ const pendingHeaders = m => ({ location: `${PS}/mission/pending/${m.id}`, ...int
 const reviewHeaders = r => ({ location: `${PS}/review/pending/${r.id}`, ...interaction(r) })
 
 async function agentOf(req, url, raw) {
-  const v = await verifySignedRequest(req, url, raw, { resource: PS, accept: ['agent'], requireContentDigest: true })
+  const v = await verifySignedRequest(req, url, raw, { resource: PS, accept: ['agent'], typedBody: true })
   return v.error ? v : { agent: v.token.sub, jwk: v.token.cnf.jwk, exp: v.token.exp, jkt: v.sig.thumbprint }
 }
 

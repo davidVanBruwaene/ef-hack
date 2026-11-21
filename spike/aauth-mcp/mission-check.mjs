@@ -206,9 +206,22 @@ const CASES = {
   undigested: async t => {
     const bare = createSignedFetch(session.getKeyMaterial, { contentDigest: 'omit' })
     const r = await call(bare, meta.mission_endpoint, json({ description: text('undigested') }))
+    if (r.status === 202) pendingOf(r, meta.mission_endpoint)
     t.must(r.status === 401, `refuse a signed proposal whose signature does not cover content-digest with 401 (§10.3); got ${r.status}`)
-    t.must(r.headers['signature-error'], 'say why in a Signature-Error header on the 401 (§11.9.1)')
-    return `${r.status} ${r.body?.error ?? ''}`
+    const why = r.headers['signature-error'] ?? ''
+    t.must(/error=invalid_input/.test(why) && why.includes('"content-digest"'), `name invalid_input and content-digest in Signature-Error (§11.9.1); got "${why}"`)
+    return `${r.status} ${why}`
+  },
+
+  untyped: async t => {
+    const { signingKey, signatureKey } = await session.getKeyMaterial()
+    const untyped = PS_COMPONENTS_BODY.filter(c => c !== 'content-type')
+    const r = await capture(await httpSigFetch(meta.mission_endpoint, { ...json({ description: text('untyped') }), signingKey, signatureKey, components: untyped, contentDigest: 'require' }))
+    if (r.status === 202) pendingOf(r, meta.mission_endpoint)
+    t.must(r.status === 401, `refuse a proposal whose signature does not cover content-type with 401 (§10.3); got ${r.status}`)
+    const why = r.headers['signature-error'] ?? ''
+    t.must(/error=invalid_input/.test(why) && why.includes('"content-type"'), `name invalid_input and content-type in Signature-Error (§11.9.1); got "${why}"`)
+    return `${r.status} ${why}`
   },
 
   swapped_body: async t => {
@@ -216,7 +229,8 @@ const CASES = {
     const signed = json({ description: text('swapped body, as signed') })
     const { headers } = await httpSigFetch(meta.mission_endpoint, { ...signed, signingKey, signatureKey, components: [...PS_COMPONENTS_BODY], contentDigest: 'require', dryRun: true })
     const r = await capture(await fetch(meta.mission_endpoint, { method: 'POST', headers, body: JSON.stringify({ description: text('swapped body, as sent') }) }))
-    t.must(r.status === 401, `refuse a proposal whose body is not the one signed with 401 (§10.3); got ${r.status}`)
+    if (r.status === 202) pendingOf(r, meta.mission_endpoint)
+    t.must(r.status === 401 && r.body?.error === 'invalid_signature', `refuse a proposal whose body is not the one signed with 401 invalid_signature (§10.3); got ${r.status} ${r.body?.error}`)
     return `${r.status} ${r.body?.error ?? ''}`
   },
 
@@ -224,7 +238,8 @@ const CASES = {
     const list = json({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
     list.headers.accept = 'application/json, text/event-stream'
     const bare = await call(createSignedFetch(session.getKeyMaterial, { contentDigest: 'omit' }), `${RESOURCE}/mcp`, list)
-    t.must(bare.status === 401, `have the resource refuse a body its signature does not cover with 401; got ${bare.status}`)
+    t.must(bare.status === 401 && bare.body?.error === 'invalid_signature' && /error=invalid_input/.test(bare.headers['signature-error'] ?? ''),
+      `have the resource refuse a body its signature does not cover with 401 invalid_signature and Signature-Error invalid_input; got ${bare.status} ${bare.body?.error} "${bare.headers['signature-error'] ?? ''}"`)
     const digested = await call(createSignedFetch(session.getKeyMaterial), `${RESOURCE}/mcp`, list)
     t.must(digested.status === 200, `have the resource answer the same request with content-digest covered; got ${digested.status}`)
     const rmeta = await (await fetch(`${RESOURCE}/.well-known/aauth-resource.json`)).json()
