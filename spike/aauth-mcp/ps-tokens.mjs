@@ -80,7 +80,7 @@ export async function verifyResourceToken(jwt, signerJkt) {
   } catch (err) {
     return err.code === 'ERR_JWT_EXPIRED'
       ? fail('expired_resource_token', 'resource_token expired')
-      : fail('invalid_resource_token', `resource_token: ${err.message}`)
+      : fail('invalid_resource_token', 'resource_token did not verify against its issuer\'s published keys')
   }
   if (payload.agent_jkt !== signerJkt) return fail('invalid_resource_token', 'resource_token agent_jkt does not match the key that signed this request')
   const presented_jti = payload.presented_jti ?? payload.person_token_jti

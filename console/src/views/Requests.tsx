@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { CheckIcon, InboxIcon, LinkIcon, QuoteIcon } from 'lucide-react'
-import { api } from '@/api'
+import { ApiError, api } from '@/api'
 import type { Rule, State, Write } from '@/types'
 import type { Group } from '@/lib/groups'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -23,13 +23,16 @@ interface Props {
 
 export function Requests({ state, groups, refresh, focus }: Props) {
   const agent = useAgentRequests()
+  // Why the last change card left without being saved; its card is gone once the state refreshes.
+  const [gone, setGone] = useState<string | null>(null)
   const group = groups.find((g) => g.key === focus) ?? groups[0]
   const own = agent.pending[0]
 
   // Your own agent's requests come first, unless you picked someone else's from the bell.
   if (own && !groups.some((g) => g.key === focus)) return <AgentRequestCard key={own.id} request={own} refresh={agent.refresh} />
   const write = state.writes?.filter((w) => w.status === 'pending').at(-1)
-  if (write && !groups.some((g) => g.key === focus)) return <WriteCard key={write.id} write={write} refresh={refresh} />
+  const onGone = (text: string) => { setGone(text); refresh() }
+  if (write && !groups.some((g) => g.key === focus)) return <WriteCard key={write.id} write={write} refresh={refresh} onGone={onGone} />
 
   if (!group) {
     return (
@@ -38,6 +41,11 @@ export function Requests({ state, groups, refresh, focus }: Props) {
           <Alert variant={agent.codeNotice.error ? 'destructive' : 'default'}>
             {agent.codeNotice.error ? null : <CheckIcon />}
             <AlertDescription>{agent.codeNotice.text}</AlertDescription>
+          </Alert>
+        ) : null}
+        {gone ? (
+          <Alert variant="destructive">
+            <AlertDescription>{gone}</AlertDescription>
           </Alert>
         ) : null}
         <Card>
@@ -171,7 +179,7 @@ function RequestCard({ group, state, refresh }: { group: Group; state: State; re
 const RULE_TEXT: Record<Rule, string> = { everyone: 'Everyone', ask: 'Ask me', only_me: 'Only me' }
 
 // Your own agent's change to what you share: exactly what it would save, before and after.
-function WriteCard({ write, refresh }: { write: Write; refresh: () => void }) {
+function WriteCard({ write, refresh, onGone }: { write: Write; refresh: () => void; onGone: (text: string) => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { before, after } = write
@@ -183,6 +191,7 @@ function WriteCard({ write, refresh }: { write: Write; refresh: () => void }) {
       await api.decideWrite(write.id, decision)
       refresh()
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409) return onGone(e.description ?? e.message)
       setError((e as Error).message)
       setBusy(false)
     }

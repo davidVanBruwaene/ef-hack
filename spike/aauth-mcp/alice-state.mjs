@@ -4,6 +4,10 @@ import { bearerToken, jsonFile, now, randomId, sha256 } from './store.mjs'
 
 export { tokenMatches } from './store.mjs'
 export const RULES = ['everyone', 'ask', 'only_me']
+// How long a write waits for its member, whatever the mission's lifetime: the member's own approval is the consent, so expiry only retires old cards.
+const pendingSeconds = Number(process.env.ALICE_WRITE_PENDING_S || 24 * 3600)
+if (!(pendingSeconds > 0)) throw new Error(`ALICE_WRITE_PENDING_S must be a positive number of seconds; got "${process.env.ALICE_WRITE_PENDING_S}"`)
+export const WRITE_PENDING_MS = pendingSeconds * 1000
 
 // A short, URL-safe id for a person as their person server names them to Alice (the sub is pairwise).
 export const requesterId = (ps, sub) => `r_${sha256(`${ps} ${sub}`).slice(0, 16)}`
@@ -34,6 +38,11 @@ export function openState(seedUrl) {
     rev++
     for (const l of listeners) l(rev)
   }
+
+  // A write left approved by a restart may or may not have reached the store; the agent's repeat re-checks the store before saving.
+  const interrupted = s.writes.filter(w => w.status === 'approved')
+  for (const w of interrupted) Object.assign(w, { status: 'failed', error: 'interrupted' })
+  if (interrupted.length) changed()
 
   const requester = id => s.requesters.find(r => r.id === id)
   const remembered = (rid, itemId) => requester(rid)?.remembered?.[itemId]
@@ -119,6 +128,15 @@ export function openState(seedUrl) {
   const sameWrite = (w, x) => w.owner === x.owner && w.requester === x.requester && w.mission_s256 === x.mission_s256 &&
     w.item_id === x.item_id && JSON.stringify(w.after) === JSON.stringify(x.after)
 
+  // Writes proposed before pending_until existed expire WRITE_PENDING_MS after created_at.
+  const deadline = w => (w.pending_until ? Date.parse(w.pending_until) : Date.parse(w.created_at) + WRITE_PENDING_MS)
+
+  function expireWrites() {
+    const late = s.writes.filter(w => w.status === 'pending' && deadline(w) <= Date.now())
+    for (const w of late) w.status = 'expired'
+    if (late.length) changed()
+  }
+
   // Each entry hashes the previous one, so an edited or dropped entry breaks the chain.
   function disclose(entry) {
     const prev = s.disclosures.at(-1)?.hash ?? ''
@@ -143,18 +161,21 @@ export function openState(seedUrl) {
 
     // An agent's change to its own member's item, held until the member answers in the console.
     proposeWrite(x) {
+      expireWrites()
       // A saved write answers a repeat only briefly, so the same change made again later is made again.
       const live = w => w.status === 'pending' || w.status === 'approved' || (w.status === 'saved' && Date.parse(w.saved_at) > Date.now() - 15 * 60_000)
       const found = s.writes.findLast(w => sameWrite(w, x) && live(w))
       if (found) return found
-      const w = { id: randomId('w'), ...x, status: 'pending', created_at: now() }
+      const at = Date.now()
+      const w = { id: randomId('w'), ...x, status: 'pending', created_at: new Date(at).toISOString(), pending_until: new Date(at + WRITE_PENDING_MS).toISOString() }
       s.writes.push(w)
       changed()
       return w
     },
-    write: id => s.writes.find(w => w.id === id),
+    write: id => { expireWrites(); return s.writes.find(w => w.id === id) },
     // With an owner, only that owner's writes can be answered.
     decideWrite(id, decision, owner) {
+      expireWrites()
       const w = s.writes.find(x => x.id === id && (owner === undefined || x.owner === owner))
       if (!w || w.status !== 'pending') return w ?? null
       Object.assign(w, { status: decision === 'approve' ? 'approved' : 'denied', decided_at: now() })
@@ -232,6 +253,7 @@ export function openState(seedUrl) {
 
     // With an owner: that owner's asks and disclosures, and the requesters they involve, with their status for this owner only.
     view(owner) {
+      expireWrites()
       if (owner === undefined) {
         return { owner: s.owner, items: s.items, requesters: s.requesters, asks: [...s.asks].reverse(), disclosures: [...s.disclosures].reverse(), writes: [...s.writes].reverse() }
       }
