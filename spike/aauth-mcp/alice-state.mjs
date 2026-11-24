@@ -1,6 +1,7 @@
 // The MCP server's state: Alice's items from alice.json, the requesters, the asks waiting on Alice or on network members, and the disclosure log.
 import { readFileSync } from 'node:fs'
 import { bearerToken, jsonFile, now, randomId, sha256 } from './store.mjs'
+import { checkChain, link } from './chain.mjs'
 
 export { tokenMatches } from './store.mjs'
 export const RULES = ['everyone', 'ask', 'only_me']
@@ -137,11 +138,8 @@ export function openState(seedUrl) {
     if (late.length) changed()
   }
 
-  // Each entry hashes the previous one, so an edited or dropped entry breaks the chain.
   function disclose(entry) {
-    const prev = s.disclosures.at(-1)?.hash ?? ''
-    const body = { at: now(), ...entry, prev }
-    s.disclosures.push({ ...body, hash: sha256(prev + JSON.stringify(body)) })
+    link(s.disclosures, { at: now(), ...entry })
     changed()
   }
 
@@ -158,6 +156,7 @@ export function openState(seedUrl) {
     decision,
     waitDecided,
     disclose,
+    checkDisclosures: () => checkChain(s.disclosures),
 
     // An agent's change to its own member's item, held until the member answers in the console.
     proposeWrite(x) {

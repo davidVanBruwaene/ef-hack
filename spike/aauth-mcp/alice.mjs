@@ -102,14 +102,14 @@ async function aauthGate(req, url, raw, message, key, sign) {
     log('✗ token rejected:', v.error, v.detail)
     return reject(401, v.error, buildAAuthHeader('agent-token'), 'The token in Signature-Key did not verify.')
   }
-  const { sig, token } = v
+  const { sig, token, request } = v
 
   if (token.type === 'agent') {
     agentByKey.set(sig.thumbprint, token.sub)
     // Listing the tools says nothing about anyone, so an agent may do it before its member approves a mission.
     if (discoveryOnly(message)) {
       log(`agent ${token.sub} lists the tools → MCP ${[message].flat().map(m => m.method).join(', ')}`)
-      return { ok: true, discovery: true, auth: token, requester: null, member: null, agent: token.sub, scopes: [], refused: new Set() }
+      return { ok: true, discovery: true, auth: token, requester: null, member: null, agent: token.sub, scopes: [], refused: new Set(), request }
     }
     log(`1. agent ${token.sub} signed in → asking for a person token`)
     return reject(401, 'person_token_required', buildAAuthHeader('person-token'))
@@ -143,14 +143,14 @@ async function aauthGate(req, url, raw, message, key, sign) {
 
   const agent = agentByKey.get(sig.thumbprint) ?? null
   const requester = state.seen({ id: rid, ps, sub: token.sub, label: token.claims?.name, agent, member })
-  return { ok: true, auth: token, requester, agent, member, scopes: held, refused }
+  return { ok: true, auth: token, requester, agent, member, scopes: held, refused, request }
 }
 
 const text = body => ({ content: [{ type: 'text', text: JSON.stringify(body, null, 2) }] })
 const failure = (error, description, extra = {}) => ({ ...text({ error, error_description: description, ...extra }), isError: true })
 
 // search_context for one owner's items: alice.json's, or a member's from the store.
-async function answerSearch({ requester, agent, mission, scopes, refused, ids, query, reason, list }) {
+async function answerSearch({ requester, agent, mission, scopes, refused, ids, query, reason, list, request }) {
   const key = item => item.item_id ?? item.id
   const found = state.resolve(requester.id, { ids, query }, list.items)
   const results = found.items.map(item => ({
@@ -201,6 +201,7 @@ async function answerSearch({ requester, agent, mission, scopes, refused, ids, q
     decided_by: [...new Set(results.map(r => r.by).filter(Boolean))].join(', ') || 'rule',
     reason: reason ?? '',
     decisions,
+    request,
   })
   log(`4. ${requester.label} from ${list.name}: shared [${Object.keys(shared).join(', ')}]; declined [${out.declined.join(', ')}]; refused by the requester's side [${out.refused.join(', ')}]; pending [${out.pending.join(', ')}]; hidden [${found.hidden.join(', ')}]`)
   return text(out)
@@ -234,7 +235,7 @@ async function applyWrite(w) {
   state.disclose({
     owner: w.owner, requester: w.requester, agent: w.agent, mission_s256: w.mission_s256, tool: 'update_context',
     query: `${w.item_id ? 'change' : 'add'} ${name}`, disclosed: [], withheld: [],
-    decided_by: w.asked ? 'owner' : 'rule', reason: w.reason ?? '', decisions: { [name]: done.status },
+    decided_by: w.asked ? 'owner' : 'rule', reason: w.reason ?? '', decisions: { [name]: done.status }, request: w.request ?? null,
   })
   log(`${w.item_id ? 'changed' : 'added'} ${name} for ${short(w.owner)}: ${done.status}${done.error ? ` (${done.error})` : ''}`)
   return done
@@ -252,7 +253,7 @@ function writeAnswer(w) {
   return text({ status: 'pending', write_id: w.id, item, note: 'Your member has not answered in their Parley console yet. Call update_context again with the same arguments later.' })
 }
 
-function contextServer({ auth, requester, agent, scopes, refused }) {
+function contextServer({ auth, requester, agent, scopes, refused, request }) {
   const server = new McpServer({ name: 'alice-context', version: '0.1.0' })
   const mission = auth.mission_s256 ?? ''
 
@@ -274,11 +275,11 @@ function contextServer({ auth, requester, agent, scopes, refused }) {
       query: z.string().optional().describe('Words to match against item labels'),
       reason: z.string().optional().describe(`Why you need these items; ${first} sees it when asked`),
     },
-  }, ({ ids, query, reason }) => answerSearch({ requester, agent, mission, scopes, refused, ids, query, reason, list: aliceOnly }))
+  }, ({ ids, query, reason }) => answerSearch({ requester, agent, mission, scopes, refused, ids, query, reason, list: aliceOnly, request }))
   return server
 }
 
-function networkServer({ auth, requester, member, agent, scopes, refused }) {
+function networkServer({ auth, requester, member, agent, scopes, refused, request }) {
   const server = new McpServer({ name: 'people-network', version: '0.1.0' })
   const mission = auth.mission_s256 ?? ''
   const notMember = () => failure('not_a_member', `${requester.label}'s person server is not linked to a member of the network.`)
@@ -325,7 +326,7 @@ function networkServer({ auth, requester, member, agent, scopes, refused }) {
     if (!member) return notMember()
     const list = await listing(person, member)
     if (!list) return failure('unknown_person', `No member ${person} in the network.`)
-    return answerSearch({ requester, agent, mission, scopes, refused, ids, query, reason, list })
+    return answerSearch({ requester, agent, mission, scopes, refused, ids, query, reason, list, request })
   })
 
   server.registerTool('update_context', {
@@ -353,7 +354,7 @@ function networkServer({ auth, requester, member, agent, scopes, refused }) {
     const quiet = after.rule === 'only_me' && (!before || before.network_rule === 'only_me')
     const w = state.proposeWrite({
       owner: member, requester: requester.id, agent, mission_s256: mission, item_id: before?.id ?? null,
-      before: before ? { value: before.value, rule: before.network_rule } : null, after, reason: reason ?? '', asked: !quiet,
+      before: before ? { value: before.value, rule: before.network_rule } : null, after, reason: reason ?? '', asked: !quiet, request,
     })
     if (w.status === 'pending' && quiet) {
       const d = state.decideWrite(w.id, 'approve')

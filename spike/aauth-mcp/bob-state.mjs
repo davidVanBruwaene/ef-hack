@@ -1,6 +1,7 @@
 // The person server's state: the missions agents proposed, the member each mission and agent belongs to, requests held for review, the answers, and the mission log.
 import { randomBytes } from 'node:crypto'
 import { bearerToken, jsonFile, now, randomId, sha256 } from './store.mjs'
+import { checkChain, link } from './chain.mjs'
 
 export { tokenMatches } from './store.mjs'
 
@@ -37,7 +38,7 @@ export function openBobState() {
     rev++
     for (const l of listeners) l(rev)
   }
-  const log = entry => s.log.push({ at: now(), ...entry })
+  const log = entry => link(s.log, { at: now(), ...entry })
   const all = () => [...s.missions, ...s.reviews]
   const isOpen = x => x.status === 'pending' && isFuture(x.pending_until)
   // Answering by any channel uses up the code, so it cannot be presented again (§11.6.3.1).
@@ -58,6 +59,7 @@ export function openBobState() {
     isOpen,
     expired: m => Date.parse(m.expires_at) <= Date.now(),
     // The log decide() reads: its decisions and the member's answers for this mission, oldest first.
+    checkLog: () => checkChain(s.log),
     missionLog: s256 => s.log.filter(e => e.mission_s256 === s256 && e.act),
 
     useCode(x) { x.code_used_at = now(); changed() },
@@ -72,13 +74,13 @@ export function openBobState() {
       return s.agents[agent]
     },
 
-    propose({ agent, description, tools, resources }) {
+    propose({ agent, description, tools, resources, request }) {
       const m = {
         id: randomId('m'), code: newCode(), agent, description, tools, resources,
         status: 'pending', created_at: now(), pending_until: later(PENDING_MINUTES),
       }
       s.missions.push(m)
-      log({ mission: m.id, event: 'proposed', agent, detail: description })
+      log({ mission: m.id, event: 'proposed', agent, detail: description, request })
       changed()
       return m
     },

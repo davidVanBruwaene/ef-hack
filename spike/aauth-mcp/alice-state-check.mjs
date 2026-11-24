@@ -1,4 +1,4 @@
-// Checks how alice-state.mjs ages out writes its member never answered, on a throwaway data dir. Usage: node alice-state-check.mjs
+// Checks how alice-state.mjs ages out writes its member never answered, and its disclosure chain, on a throwaway data dir. Usage: node alice-state-check.mjs
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -9,6 +9,8 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const TMP = mkdtempSync(join(tmpdir(), 'alice-state-check-'))
 process.env.AAUTH_DATA_DIR = TMP
 const { WRITE_PENDING_MS, openState } = await import('./alice-state.mjs')
+const { checkChain, link } = await import('./chain.mjs')
+const { sha256 } = await import('./store.mjs')
 
 const check = (ok, what) => { if (!ok) throw new Error(what) }
 const aged = ms => new Date(Date.now() - ms).toISOString()
@@ -16,6 +18,31 @@ const change = n => ({ owner: 'dana', requester: 'r_x', agent: 'aauth:a@x', miss
 
 let failed = 0
 const cases = {
+  chain: s => {
+    for (const n of [1, 2, 3]) s.disclose({ owner: 'dana', requester: 'r_x', tool: 'search_context', disclosed: [`i${n}`], request: { content_digest: `sha-256=:${n}:`, token_jti: `j${n}` } })
+    check(s.checkDisclosures().ok, `three disclosures do not chain: ${JSON.stringify(s.checkDisclosures())}`)
+    const entry = s.view('dana').disclosures.find(d => d.disclosed[0] === 'i2')
+    entry.request.token_jti = 'forged'
+    const broken = s.checkDisclosures()
+    entry.request.token_jti = 'j2'
+    check(!broken.ok && s.checkDisclosures().ok, `editing a bound jti left the chain ${JSON.stringify(broken)}`)
+  },
+  chain_format: () => {
+    // Entries hashed before chain.mjs existed must still verify, and unhashed ones may lead the list.
+    const old = []
+    for (const n of [1, 2]) {
+      const prev = old.at(-1)?.hash ?? ''
+      const body = { at: `t${n}`, tool: 'x', prev }
+      old.push({ ...body, hash: sha256(prev + JSON.stringify(body)) })
+    }
+    check(checkChain(old).ok, 'a chain in the earlier format does not verify')
+    const legacy = [{ at: 't0', event: 'proposed' }]
+    link(legacy, { at: 't1', event: 'approved' })
+    link(legacy, { at: 't2', event: 'supervised' })
+    check(checkChain(legacy).ok, `a log chained after unhashed rows does not verify: ${JSON.stringify(checkChain(legacy))}`)
+    legacy.splice(1, 1)
+    check(!checkChain(legacy).ok, 'dropping a chained row went unnoticed')
+  },
   expires: s => {
     const w = s.proposeWrite(change(1))
     check(Date.parse(w.pending_until) - Date.parse(w.created_at) === WRITE_PENDING_MS, `pending_until is not created_at + ${WRITE_PENDING_MS / 1000}s: ${JSON.stringify(w)}`)
