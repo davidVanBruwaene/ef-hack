@@ -196,5 +196,13 @@ const stopBob = bobAllowsTheRest(approved.s256)
 let failed = 0
 for (const name of names) if (!(await runCase(name, approved))) failed++
 await stopBob()
+// Each disclosure under this run's mission names the signed request it answers, and its token jti is one Bob's person server logged issuing.
+const disclosed = (await api('/state')).disclosures.filter(d => d.mission_s256 === approved.s256)
+if (disclosed.length) {
+  const issued = new Set((await ps.state(BOB.id)).log.filter(e => e.event === 'auth_token' && e.mission_s256 === approved.s256).map(e => e.auth_token_jti))
+  const unbound = disclosed.filter(d => !/^sha-256=:/.test(d.request?.content_digest ?? '') || !d.request.agent_jkt || !d.request.signature || !issued.has(d.request.token_jti))
+  console.log(`${unbound.length ? '✗' : '✓'} binding: ${disclosed.length - unbound.length} of ${disclosed.length} disclosures carry the signed request and an auth token jti the person server issued`)
+  if (unbound.length) failed++
+}
 console.log(failed ? `${failed} of ${names.length} failed` : `all ${names.length} passed`)
 process.exitCode = failed ? 1 : 0

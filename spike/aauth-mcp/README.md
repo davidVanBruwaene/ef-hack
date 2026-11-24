@@ -55,7 +55,7 @@ The checks need no mission of their own. Each run proposes one and approves it a
 
 | Command | Case | Expected result |
 |---|---|---|
-| `npm run check` | All thirteen cases below, in order, under one fresh mission | `all 13 passed` |
+| `npm run check` | All thirteen cases below, in order, under one fresh mission, then checks that each disclosure under it carries the signed request and an auth token `jti` the person server logged issuing | `✓ binding` and `all 13 passed` |
 | `node client-check.mjs everyone` | Two Everyone items | Both come back |
 | `node client-check.mjs ask` | An Ask-me item | The call waits; the script answers as Alice (approve) through `/api`; the item comes back |
 | `node client-check.mjs deny` | An Ask-me item | Same, but Alice denies; the item is `declined` |
@@ -72,7 +72,7 @@ The checks need no mission of their own. Each run proposes one and approves it a
 | `npm run check:gateway` | The hosted MCP endpoint with its own store, world and console server (see [The hosted MCP endpoint](#the-hosted-mcp-endpoint)) | `all 14 passed` |
 | `npm run check:network` | The people network, with its own store and world (see [The people network](#the-people-network)) | `all 13 passed` |
 | `npm run check:missions` | -11 conformance for missions, signatures and the supervisor, against a running world | `all 25 passed, 3 skipped` (the skipped ones need Jev, or a mission that ends early) |
-| `npm run check:state` | Writes the member never answers expire, writes a restart caught mid-save fail, and a bad `ALICE_WRITE_PENDING_S` stops the server, on a throwaway data dir | `all 8 passed` |
+| `npm run check:state` | Writes the member never answers expire, writes a restart caught mid-save fail, a bad `ALICE_WRITE_PENDING_S` stops the server, and an edited or dropped log entry breaks the chain, on a throwaway data dir | `all 10 passed` |
 
 To run it from Claude Code, approve a mission (`npm run mission`), then write the MCP config for this checkout (`mcp.json` is gitignored):
 
@@ -134,7 +134,7 @@ The owner console (`console/`) calls these on Alice's server. Every call except 
 | `POST /api/items` | `{label, url, rule?}` | Adds a link, `ask` by default. Stands in until the item store exists |
 | `GET /api/events` | | Server-sent `changed` events carrying a revision number, and no state; refetch `/api/state` on each |
 
-An answer without `remember` holds for that requester's current mission only. Requester ids are derived from the person server and the pairwise `sub` it issues for Alice. The label comes from the `name` claim in the auth token. Each disclosure entry carries `prev` and `hash`, chaining it to the one before.
+An answer without `remember` holds for that requester's current mission only. Requester ids are derived from the person server and the pairwise `sub` it issues for Alice. The label comes from the `name` claim in the auth token. Each disclosure entry carries `prev` and `hash`, chaining it to the one before (`chain.mjs`; `checkChain` verifies a list). Each also carries `request`, the signed request it answers: `method`, `authority`, `path`, `content_type`, `content_digest`, the raw `signature_input` and `signature`, `created`, the signing key's thumbprint `agent_jkt`, the auth token's `token_jti`, and `token_s256`, the SHA-256 of the token in `Signature-Key`. With the request body and that token, the signature can be verified again later. The entry is hashed with its `request`, so the chain covers it.
 
 ## The people network
 
@@ -248,7 +248,7 @@ The tunnel passes the public hostname through as the `Host` header, and the HTTP
 
 ## Limits
 
-- **Missions.** The person server implements mission creation and approval (§8.1, §8.2) and keeps a log. It returns no `person_tokens` in the approval response, since minting them needs a request the agent signed, and it offers no clarification chat. Missions last 24 hours.
+- **Missions.** The person server implements mission creation and approval (§8.1, §8.2) and keeps a log, chained like the disclosure log. Its `proposed`, `person_token`, `person_token_refused` and `supervised` rows carry the same `request`; `person_token` rows carry the issued `person_token_jti`, `supervised` rows the `resource_token_jti` and `presented_token_jti`, and each issued auth token gets an `auth_token` row with its `auth_token_jti`, which is the `token_jti` in Alice's disclosure entries. Neither log is signed or anchored outside its server, so whoever runs the server can rewrite a whole chain. It returns no `person_tokens` in the approval response, since minting them needs a request the agent signed, and it offers no clarification chat. Missions last 24 hours.
 - **Members' sign-in.** A member answers in the console with their store passkey, or a script answers with the console token. An agent running on the machine that runs the person server can read `.keys/bob-console-token`, and so answer for its member. A person server on its own host closes that.
 - **The local proxy's identity.** `proxy.mjs` signs as one agent, `aauth:claude@<agent host>`, so the first member to approve its mission owns it. Each hosted connection is an agent of its own, and AAuth agents from other providers bring their own identity.
 - **Hosted clients.** Each hosted agent product decides whether it accepts a custom remote MCP server; `check:gateway` plays a generic MCP client, not any particular product.

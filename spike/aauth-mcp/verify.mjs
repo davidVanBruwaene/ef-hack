@@ -1,5 +1,6 @@
 import { parseDictionary, verify as httpSigVerify } from '@hellocoop/httpsig'
 import { verifyToken } from '@aauth/resource'
+import { sha256 } from './store.mjs'
 
 // -11 §10.3 profile: a body is signed through Content-Digest, and at a PS (typedBody) through Content-Type too.
 const PS_BODY_INPUT = ['@method', '@authority', '@path', 'content-type', 'content-digest', 'signature-key']
@@ -25,8 +26,27 @@ export async function verifySignedRequest(req, url, raw, { resource, accept, typ
   }
   try {
     const token = await verifyToken({ jwt: sig.jwt.raw, httpSignatureThumbprint: sig.thumbprint, resource, accept })
-    return { sig, token }
+    return { sig, token, request: requestBinding(req, url, sig, token) }
   } catch (err) {
     return { sig, error: err.code ?? 'invalid_token', detail: err.message, signed }
+  }
+}
+
+// What a record keeps of the signed request: with the body and the token token_s256 commits to, signature re-verifies against agent_jkt.
+export function requestBinding(req, url, sig, token) {
+  let created = null
+  try { created = parseDictionary(String(req.headers['signature-input'])).get(sig.label)?.[1]?.get('created') ?? null } catch {}
+  return {
+    method: req.method ?? 'POST',
+    authority: req.headers.host ?? '',
+    path: url.pathname,
+    content_type: req.headers['content-type'] ?? null,
+    content_digest: req.headers['content-digest'] ?? null,
+    signature_input: String(req.headers['signature-input'] ?? ''),
+    signature: String(req.headers['signature'] ?? ''),
+    created,
+    agent_jkt: sig.thumbprint,
+    token_jti: token?.jti ?? token?.claims?.jti ?? null,
+    token_s256: sha256(sig.jwt.raw),
   }
 }

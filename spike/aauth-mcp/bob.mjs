@@ -74,7 +74,7 @@ const reviewHeaders = r => ({ location: `${PS}/review/pending/${r.id}`, ...inter
 
 async function agentOf(req, url, raw) {
   const v = await verifySignedRequest(req, url, raw, { resource: PS, accept: ['agent'], typedBody: true })
-  return v.error ? v : { agent: v.token.sub, jwk: v.token.cnf.jwk, exp: v.token.exp, jkt: v.sig.thumbprint }
+  return v.error ? v : { agent: v.token.sub, jwk: v.token.cnf.jwk, exp: v.token.exp, jkt: v.sig.thumbprint, request: v.request }
 }
 
 function metadata(res) {
@@ -100,6 +100,7 @@ async function createMission(req, res, url, raw) {
     description: body.description.trim(),
     tools: Array.isArray(body.tools) ? body.tools.filter(t => typeof t?.name === 'string') : undefined,
     resources: Array.isArray(body.resources) ? body.resources.filter(r => typeof r === 'string') : undefined,
+    request: who.request,
   })
   const owner = state.ownerOf(who.agent)
   log(`mission proposed by ${who.agent}${owner ? ` (${owner.name}'s agent)` : ''}: "${m.description}" → waiting at ${INTERACT_URL}`)
@@ -125,7 +126,7 @@ async function personToken(req, res, url, raw) {
   const body = parseJson(raw) ?? {}
   const refuse = (why, send) => {
     log(`✗ person token for ${body.resource ?? '?'} ${why} → refused`)
-    state.record({ mission_s256: body.mission_s256, event: 'person_token_refused', agent: who.agent, detail: `${body.resource ?? ''} ${why}` })
+    state.record({ mission_s256: body.mission_s256, event: 'person_token_refused', agent: who.agent, detail: `${body.resource ?? ''} ${why}`, request: who.request })
     return send()
   }
   if (badResource(body.resource)) return problem(res, 400, 'invalid_request', badResource(body.resource))
@@ -137,13 +138,14 @@ async function personToken(req, res, url, raw) {
   if (!m || m.agent !== who.agent || m.status !== 'approved') return refuse(`under mission ${short(body.mission_s256)}, unknown for this agent`, () => noSuchMission(res))
   if (state.expired(m)) return refuse(`under mission ${short(m.s256)}, which has expired`, () => terminated(res))
   log(`person token for ${m.person.name} at ${body.resource} under mission ${short(m.s256)}`)
-  state.record({ mission: m.id, mission_s256: m.s256, event: 'person_token', agent: who.agent, detail: body.resource })
+  const t = await issuePersonToken({ member: m.person.id, resource: body.resource, agentJwk: who.jwk, agentExp: who.exp, mission: m })
+  state.record({ mission: m.id, mission_s256: m.s256, event: 'person_token', agent: who.agent, detail: body.resource, person_token_jti: claimsOf(t.person_token).jti ?? null, request: who.request })
   state.noteSubject(body.resource, subjectFor(m.person.id, body.resource), m.person)
-  json(res, 200, await issuePersonToken({ member: m.person.id, resource: body.resource, agentJwk: who.jwk, agentExp: who.exp, mission: m }), { 'cache-control': 'no-store' })
+  json(res, 200, t, { 'cache-control': 'no-store' })
 }
 
 // The supervisor seam: each scope the agent does not yet hold is judged against the approved mission (never by Jev if its member chose rules only) and logged.
-async function supervise(m, agent, resource, scopes, justification) {
+async function supervise(m, agent, resource, scopes, justification, bound = {}) {
   const mission = { s256: m.s256, status: m.status, blob_b64: m.blob_b64 }
   const opts = m.supervisor === 'rules' ? { jev: false } : {}
   const named = (state.blob(m)?.approved_resources ?? []).includes(resource)
@@ -157,15 +159,19 @@ async function supervise(m, agent, resource, scopes, justification) {
       : { decision: named ? 'ALLOW' : 'REVIEW', by: 'rule', rule: named ? 'resource_named' : 'resource_not_named', p: null, model: null,
           reason: named ? 'the mission names this resource' : 'the mission does not name this resource' }
     verdicts.push({ scope, act, ...d })
-    state.record({ mission: m.id, mission_s256: m.s256, event: 'supervised', act, ...d })
+    state.record({ mission: m.id, mission_s256: m.s256, event: 'supervised', act, ...d, ...bound })
   }
   const decision = verdicts.some(v => v.decision === 'DENY') ? 'DENY' : verdicts.some(v => v.decision === 'REVIEW') ? 'REVIEW' : 'ALLOW'
   return { decision, verdicts }
 }
 
+// The issued jti is what the resource's disclosure log records as token_jti, so the two logs join on it.
 const issue = async (res, args) => {
   const t = await issueAuthToken(args)
-  return t.error ? problem(res, t.status, t.error, t.detail) : json(res, 200, t, { 'cache-control': 'no-store' })
+  if (t.error) return problem(res, t.status, t.error, t.detail)
+  const { m, rt } = args
+  state.record({ mission: m.id, mission_s256: m.s256, event: 'auth_token', agent: m.agent, detail: rt.iss, scope: rt.scope ?? '', auth_token_jti: claimsOf(t.auth_token).jti ?? null, resource_token_jti: rt.jti ?? null })
+  return json(res, 200, t, { 'cache-control': 'no-store' })
 }
 
 async function authToken(req, res, url, raw) {
@@ -185,13 +191,14 @@ async function authToken(req, res, url, raw) {
   const holds = new Set((claimsOf(body.presented_token).scope ?? '').split(' ').filter(Boolean))
   const fresh = (rt.scope ?? '').split(' ').filter(sc => sc && !holds.has(sc))
   const justification = typeof body.justification === 'string' && body.justification ? body.justification : undefined
-  const { decision, verdicts } = await supervise(m, who.agent, rt.iss, fresh, justification)
+  const bound = { resource_token_jti: rt.jti ?? null, presented_token_jti: p.presented.jti ?? null, request: who.request }
+  const { decision, verdicts } = await supervise(m, who.agent, rt.iss, fresh, justification, bound)
   log(`supervisor on [${fresh.join(' ')}] under ${nameOf(m)}'s mission ${short(m.s256)}${justification ? ` ("${justification}")` : ''}: ${verdicts.map(x => `${x.scope} ${x.decision} (${x.rule ?? x.by}: ${x.reason})`).join('; ') || 'nothing new'} → ${decision}`)
   if (decision === 'DENY') {
     const denied = verdicts.filter(x => x.decision === 'DENY')
     return problem(res, 403, 'denied', refusal(m, rt.iss, denied.map(x => x.scope), denied.map(x => forAgent(m, x)).join(' ')))
   }
-  const args = { rt, presentedExp: p.presented.exp, agentJwk: who.jwk, name: m.person.name }
+  const args = { rt, presentedExp: p.presented.exp, agentJwk: who.jwk, name: m.person.name, m }
   if (decision === 'ALLOW') return issue(res, args)
   const r = state.openReview({ mission: m, agent: who.agent, resource: rt.iss, scopes: fresh, acts: verdicts.map(x => x.act), justification, verdicts })
   held.set(r.id, args)
